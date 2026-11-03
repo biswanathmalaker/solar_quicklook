@@ -1,0 +1,10 @@
+# Downloaded and derived data (613 MB; portable on its own, never in git)
+cache/
+# Figures written by the scripts (regenerable)
+fov/
+# Per-machine UI state (last date, wavelength, boxes ticked)
+browse_settings.json
+browse_web_settings.json
+# Python
+__pycache__/
+*.pyc

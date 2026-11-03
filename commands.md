@@ -1,0 +1,90 @@
+# Commands
+
+Run from `~/projects/solar_quicklook`. Times are UTC.
+
+## AIA frames and plume coordinates
+
+| Command | What it does |
+|---|---|
+| `./download_ref_file.py --name plume_002 --ref-date 2019-05-02T18:00:00` | Download the AIA 171 frame at that time → `plume_002/171/` |
+| `... --wavelength 171 193` | Download these channels (171 193 211 304 335 94 131) |
+| `... --end-date 2019-05-03T18:00:00` | Download one frame per `--cadence` up to this date |
+| `... --cadence 30min` | Cadence with `--end-date` (default 1h) |
+| `... --overwrite` | Download again frames already there |
+| `./plot_ref_file.py --name plume_002` | Show `plume_002/171/`; click the plume, and its coordinate goes to `ref_coords.csv` |
+| `./plot_ref_file.py --name plume_002 --wavelength 193` | Same, for `plume_002/193/` |
+
+Keys in `plot_ref_file.py`: left click = mark, `u` = undo, `b` / `n` = previous / next frame.
+
+## Spacecraft positions
+
+| Command | What it does |
+|---|---|
+| `./plot_positions.py` | Polar plot of planets and spacecraft now |
+| `./plot_positions.py --date "2025-10-20 12:00" --step 1d` | Same at a date, stepping by 1h, 4h, 12h, 1d, 3d, 1wk or 1mo |
+
+## Browse through time
+
+| Command | What it does |
+|---|---|
+| `./browse_web.py` | Web browser at http://localhost:5006/browse, last date shown (settings kept) |
+| `./browse_web.py 2025-10-20T12:00` | Same, starting at this date |
+| `... --port 5007 --no-show` | Other port; do not open a browser tab |
+| `./browse.py` | Old matplotlib browser (being replaced) |
+
+In the web page: timeline (hover = details, click = go there, wheel = zoom time); images: wheel = zoom, drag = pan, hover inside a FOV = its block, line below = cursor helioprojective x, y and Stonyhurst lon, lat, μ; date box + Enter; ◀ / ▶ = step by the cadence; tabs: summary, Solar Orbiter files, DKIST, positions; *positions* = PSP / Solar Orbiter sub-points, limbs and source regions + polar plot; *download original data* = full-resolution AIA (JSOC) + Solar Orbiter files of the step; *show Solar Orbiter originals* = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution.
+
+In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or ← / → = step by the cadence; cadence and AIA channel buttons; *show* = which FOVs to draw; *positions* = spacecraft positions window; *original data* = download full-resolution AIA and the Solar Orbiter files of the step.
+
+## Solar Orbiter: what was observed
+
+| Command | What it does |
+|---|---|
+| `./find_obs.py 2025-10-01 2025-10-31` | HRIEUV and PHI-HRT observing blocks: time, cadence, SOOP, pointing, latitudes covered, Earth visibility |
+| `... --products hri174 hriopn hrilya phi-hrt fsi174 fsi304 phi-fdt spice` | Choose the products (`hriopn` = HRIEUV 174 Å, filter wheel open) |
+| `... --soop Polar` | Only blocks whose SOOP name contains "Polar" |
+| `... --min-lat 60` | Only pointed blocks reaching \|lat\| ≥ 60° |
+| `... --min-files 10` | Only blocks with at least 10 files |
+| `... --both hri174 phi-hrt` | Only blocks where the two overlap in time and on the Sun |
+| `... --csv blocks.csv` | Also save the table |
+| `... --refresh` | Query SOAR again (new releases) instead of the cache |
+| `... --no-headers` | Skip the slow FITS-header queries |
+| `... --no-soop-info` | Do not list the SOOP summary entries |
+
+## Fields of view on the full disk
+
+| Command | What it does |
+|---|---|
+| `./plot_fov.py 2025-10-20T12:30` | HRIEUV / PHI-HRT / DKIST FOVs, PSP and its source region, on AIA 193 and FSI 174 → `fov/fov_20251020_1230.png` |
+| `... --products hri174 hrilya phi-hrt` | Which Solar Orbiter FOVs to draw |
+| `... --window 24h` | Use Solar Orbiter files within this of the time (default 2h) |
+| `... --aia 171` | AIA channel (default 193) |
+| `... --fsi 304` | FSI channel (default 174) |
+| `... --no-fsi` | AIA panel only |
+| `... --spacecraft PSP STEREO-A BepiColombo` | Mark these: sub-spacecraft point and limb |
+| `... --connect PSP "Solar Orbiter" "Earth / L1"` | Draw their solar source regions (Parker spiral) |
+| `... --speeds 350-750` | Wind speeds for the source regions (default 300-800 km/s) |
+| `... --margin 5` | Degrees around the source regions (default 10) |
+| `... --dkist-window 6h` | DKIST datasets within this of the time (default 3h) |
+| `... --no-dkist` | Do not draw DKIST |
+| `... --positions` | Add the spacecraft-positions panel |
+| `... --zoom` | Zoom on the Solar Orbiter FOVs |
+| `... --no-show` | Only save the figure |
+
+## DKIST, SOOPs and SPICE studies
+
+| Command | What it does |
+|---|---|
+| `./spice_meta.py solo_L2_spice-n-ras_20251020T113040_V05_352321876-008-DR6.fits` | The file's SPICE study: description, raster, exposure, spectral lines |
+| `./dkist_meta.py 2025-10-01 2025-10-31` | DKIST datasets: instrument, times, FOV box, proposal, lines |
+| `./dkist_meta.py 2025-10-01 2025-10-31 --refresh` | Same, querying DKIST again instead of the cache |
+| `./soops.py` | All runs in ESA's SOOP summary |
+| `./soops.py Polar` | Runs whose SOOP name contains "Polar" |
+| `./soops.py --date 2025-10-20` | Runs covering this date |
+
+## Help
+
+| Command | What it does |
+|---|---|
+| `./help.py` | Print the main commands |
+| `./<script>.py -h` | All options of a script |
