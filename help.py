@@ -56,13 +56,17 @@ Everything for a name goes in <name>/<wavelength>/ (frames, saved figures).
 9. What DKIST observed (bounding boxes, instruments, lines):
      ./dkist_meta.py 2025-10-01 2025-10-31
 
+   What IRIS observed (pointing, raster, slit-jaw channels, aim, planner; LMSAL HCR):
+     ./iris_meta.py 2025-10-10 2025-10-17 --pole --long
+
 10. ESA SOOP summary (from soops-summary.html; save a newer copy of the web page over it to update):
      ./soops.py Polar               ./soops.py --date 2025-10-20
 
 11. Browse through time in the web browser (http://localhost:5006/browse; settings kept):
      ./browse_web.py                ./browse_web.py 2025-10-20T12:00
    timeline: hover = details, click = go there, wheel = zoom time; images: wheel zoom, drag pan,
-   hover inside a FOV = its block; below each image = cursor x, y (arcsec), lon, lat, mu; ◀ / ▶ = step; tabs: summary, Solar Orbiter files, DKIST, positions
+   hover inside a FOV = its block; below each image = cursor x, y (arcsec), lon, lat, mu; ◀ / ▶ = step; tabs: summary, Solar Orbiter files, DKIST, IRIS, positions
+   IRIS = slit-jaw (pale) and raster (coral) boxes, off-limb part dashed
    positions = PSP / Solar Orbiter sub-points, limbs, source regions + polar plot
    download original data = full-res AIA (JSOC, 1-3 min) + Solar Orbiter files of the step (cache/)
    show Solar Orbiter originals = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution
@@ -71,6 +75,10 @@ Everything for a name goes in <name>/<wavelength>/ (frames, saved figures).
    date box + Enter, << / >> (b / n, arrows), cadence 12s .. 1wk, AIA channel, show (FOVs),
    positions (2nd window), original data (full-res AIA + Solar Orbiter files, kept in cache/)
 
-Everything queried / downloaded is kept in cache/ and not fetched again (--refresh in find_obs.py
-and dkist_meta.py to get newly released data). See README.md, "The cache".
+Everything queried / downloaded is kept in cache/ and not fetched again. All metadata is there
+(SOAR since 2020-02, DKIST since 2020-01, IRIS since 2013-07). New releases of recent months:
+     ./soar_meta.py --from 2026-05 --to 2026-11 --refresh
+     ./iris_meta.py 2026-10-01 2026-11-30 --refresh      ./dkist_meta.py 2026-11-01 2026-11-30 --refresh
+   new months: ./soar_meta.py --all   ./iris_meta.py --all   ./dkist_meta.py --all
+   (then restart browse_web.py). See README.md, "The cache".
 """)

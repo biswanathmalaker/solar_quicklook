@@ -10,6 +10,7 @@ cache/dkist/ like the SOAR metadata (soar_meta.py): once, again only with --refr
     d = dm.datasets("2025-10-01", "2025-10-31")     # one row per dataset
 
 Run:  ./dkist_meta.py 2025-10-01 2025-10-31          # table of the observations
+      ./dkist_meta.py --all                          # cache every month since 2020-01 not yet cached
 """
 import argparse
 import re
@@ -23,6 +24,7 @@ from soar_meta import OUT_DIR, months
 API = "https://api.dkistdc.nso.edu/datasets/v1"
 CACHE = OUT_DIR / "cache" / "dkist"
 PAGE = 500
+FIRST_MONTH = pd.Timestamp("2020-01-01")   # DKIST first light 2019-12; science data from 2021-22
 KEEP = ["datasetId", "instrumentName", "startTime", "endTime", "boundingBox", "primaryProposalId",
         "isEmbargoed", "embargoEndDate", "spectralLines", "wavelengthMin", "wavelengthMax", "frameCount",
         "averageDatasetSpatialSampling", "qualityAverageFriedParameter", "browseMovieUrl"]
@@ -89,12 +91,34 @@ def datasets(t0, t1, refresh=False):
     return df.drop_duplicates("datasetId").sort_values("start").reset_index(drop=True)
 
 
+def fetch_all(refresh=False):
+    """Cache every month from FIRST_MONTH to now (cached months are skipped unless refresh)."""
+    ms = months(FIRST_MONTH, pd.Timestamp.now())
+    todo = [m for m in ms if refresh or not (CACHE / f"datasets_{m:%Y-%m}.csv.gz").is_file()]
+    print(f"DKIST: {len(ms)} months {ms[0]:%Y-%m} .. {ms[-1]:%Y-%m}, {len(ms) - len(todo)} in the cache, {len(todo)} to fetch")
+    failed, n = [], 0
+    for m in todo:
+        try:
+            n += len(query_month(m, refresh=refresh))
+        except Exception as e:
+            print(f"  {m:%Y-%m} failed: {e}")
+            failed.append(m)
+    print(f"done: {n} datasets fetched; " + (f"failed (run again): {', '.join(f'{m:%Y-%m}' for m in failed)}"
+                                             if failed else "all months cached"))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("start")
-    ap.add_argument("end")
+    ap.add_argument("start", nargs="?")
+    ap.add_argument("end", nargs="?")
+    ap.add_argument("--all", action="store_true", help="cache every month since 2020-01 (not yet cached)")
     ap.add_argument("--refresh", action="store_true")
     args = ap.parse_args()
+    if args.all:
+        fetch_all(args.refresh)
+        return
+    if not (args.start and args.end):
+        ap.error("give start and end (or --all)")
     d = datasets(args.start, args.end, args.refresh)
     if d.empty:
         print("No DKIST datasets.")

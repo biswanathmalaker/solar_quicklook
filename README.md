@@ -26,12 +26,13 @@ scripts only need the reference time.
 | `cache/horizons_positions.json` | Spacecraft positions downloaded from JPL Horizons (by `plot_positions.py` and `plot_ref_file.py`), read first next time; a period missing from it is downloaded and added. |
 | `<name>/<wavelength>/` | e.g. `plume_002/171/`, `eq-ch/193/`: the AIA frames `<name>_<wavelength>_YYYYMMDD_HHMMSS.fits` (DATE-OBS), and the figures saved from them by `plot_ref_file.py` (same name, `.png` / `.pdf`). |
 | `ref_coords.csv` | One row per plume: `plume_name, date_obs, xcen, ycen` (made by `plot_ref_file.py`). |
-| `browse_web.py` | Web version of `browse.py` (Panel + Bokeh, http://localhost:5006/browse; settings in `browse_web_settings.json`): timeline of every observing block (HRIEUV, HRI-Lya, PHI-HRT, SPICE), FSI run and DKIST dataset (hover for details, click to go there); AIA and FSI with zoom / pan kept between steps and hover on each FOV for its block, and below each image the cursor position (helioprojective x, y; Stonyhurst lon, lat and μ for that image's observer, or the distance in R☉ off the disk); tabs: the summary of `browse.py`, the Solar Orbiter files and the DKIST datasets of the step, positions. Buttons: *positions* (PSP / Solar Orbiter sub-points, limbs and source regions on both images; polar plot with Parker spirals), *download original data* (full-resolution AIA from JSOC, then shown at 2048 px, and the Solar Orbiter files of the step), *show Solar Orbiter originals* (HRIEUV / HRI-Lya / PHI-HRT B_LOS files nearest the time, full resolution, own view). Images reduced once to 1024-px PNGs (`cache/web/`), FOV outlines in closed form, neighbouring steps prepared in the background: ~0.1 s a step once cached. |
+| `browse_web.py` | Web version of `browse.py` (Panel + Bokeh, http://localhost:5006/browse; settings in `browse_web_settings.json`): timeline of every observing block (HRIEUV, HRI-Lya, PHI-HRT, SPICE), FSI run and DKIST dataset (hover for details, click to go there); AIA and FSI with zoom / pan kept between steps and hover on each FOV for its block, and below each image the cursor position (helioprojective x, y; Stonyhurst lon, lat and μ for that image's observer, or the distance in R☉ off the disk); IRIS observations (timeline row; slit-jaw area pale, raster area coral, on both images); tabs: the summary of `browse.py` plus IRIS, the Solar Orbiter files and the DKIST datasets of the step, IRIS (aim, planner, programme, raster and slit-jaw channels, lines, level-2 links and sizes), positions. Buttons: *positions* (PSP / Solar Orbiter sub-points, limbs and source regions on both images; polar plot with Parker spirals), *download original data* (full-resolution AIA from JSOC, then shown at 2048 px, and the Solar Orbiter files of the step), *show Solar Orbiter originals* (HRIEUV / HRI-Lya / PHI-HRT B_LOS files nearest the time, full resolution, own view). Images reduced once to 1024-px PNGs (`cache/web/`), FOV outlines in closed form, neighbouring steps prepared in the background: ~0.1 s a step once cached. |
 | `browse.py` | (Old, matplotlib) Interactive: step through time (date box, cadence 12s ... 1wk, AIA channel; settings kept in `browse_settings.json`); AIA with the FOVs of what Solar Orbiter (HRIEUV, HRI-Lya, PHI-HRT, SPICE) and DKIST observed in each step (one colour per instrument), FSI when Solar Orbiter observed, a summary (what each instrument measures, campaign aim, time range, cadence, FOV; SPICE study and lines; DKIST instrument, lines, proposal); "positions" window (spacecraft, limbs, source regions); "original data" (full-resolution AIA + the Solar Orbiter files). |
 | `soar_meta.py` | Solar Orbiter archive (SOAR) metadata: the L2 files of a time range, their pointing, and observing blocks. Used by the two scripts below; also importable. |
 | `find_obs.py` | Table of Solar Orbiter observing blocks in a time range: where HRIEUV / PHI-HRT pointed, latitudes covered, whether Earth sees the same region; filters by SOOP, latitude, overlap of two instruments. |
 | `plot_fov.py` | Figure at a time: HRIEUV / HRI-Lya / PHI-HRT and DKIST fields of view, PSP (and other spacecraft) positions and the solar source regions their wind can come from, on AIA (Earth view) and EUI/FSI (Solar Orbiter view); optional positions panel → `fov/fov_YYYYMMDD_HHMM.png`. |
 | `spice_meta.py` | What a SPICE study observes: description, raster/slit/exposure, spectral windows (lines) with formation temperatures. Read once per study from the FITS headers of one file (HTTP byte ranges on the SPICE data release at IAS, a few kB), cached in `cache/spice/studies.json`. `./spice_meta.py <SPICE L2 file name>`. |
+| `iris_meta.py` | IRIS observations (aim, planner, programme, pointing, roll, raster and slit-jaw FOVs, steps, cadences, exposures, channels, lines, level-2 links) in a time range, from the LMSAL Heliophysics Coverage Registry (the database behind iris.lmsal.com/search, no login); cached in `cache/iris/`. Also a command: `./iris_meta.py 2025-10-10 2025-10-17 --pole --long`. |
 | `dkist_meta.py` | DKIST datasets (instrument, times, bounding box, proposal, lines) in a time range, from the DKIST Data Center API; cached in `cache/dkist/`. Also a command: `./dkist_meta.py 2025-10-01 2025-10-31`. |
 | `soops.py` | ESA's SOOP summary (`soops-summary.html`, saved by hand from the web page) as a table, `cache/soops/soops_summary.csv`; `./soops.py Polar`, `./soops.py --date 2025-10-20`. `find_obs.py` lists the runs behind its blocks. `soops.page(soop)` reads a SOOP's ESA description page (aim, instrument modes), cached in `cache/soops/pages/`. |
 | `soops-summary.html` | https://www.cosmos.esa.int/web/solar-orbiter/soops-summary saved from the browser; save a newer copy over it to update (re-parsed automatically). |
@@ -171,8 +172,9 @@ Everything queried or downloaded goes into `cache/` and is read from there next 
 
 | Folder / file | What | Queried again |
 |---|---|---|
-| `cache/soar/` | SOAR metadata, one `.csv.gz` per kind and month (`items_*`, `fov_*`, `hdr_*`, `spicemode_*` = SPICE study of each file) | only with `--refresh` (`find_obs.py`), e.g. for data released since (the file date says when it was queried); incomplete months are not kept |
+| `cache/soar/` | SOAR metadata, one `.csv.gz` per kind and month (`items_*`, `fov_*`, `hdr_*`, `spicemode_*` = SPICE study of each file); all months since 2020-02 with `./soar_meta.py --all` (also `dkist_meta.py --all`, `iris_meta.py --all`) | only with `--refresh` (`find_obs.py`), e.g. for data released since (the file date says when it was queried); incomplete months are not kept |
 | `cache/dkist/` | DKIST Data Center datasets, one file per month | only with `--refresh` (`dkist_meta.py`) |
+| `cache/iris/` | IRIS observations from LMSAL HCR, the full answer per month (`hcr_YYYY-MM.json.gz`; `probe/` = first test queries) | only with `--refresh` (`iris_meta.py`), e.g. for recent days whose level-2 entries were not ready |
 | `cache/soops/soops_summary.csv` | the SOOP summary table | when `soops-summary.html` is replaced by a newer copy |
 | `cache/soops/pages/` | SOOP description pages (aim, instrument modes), one JSON per SOOP | never (delete the file to read it again) |
 | `cache/spice/studies.json` | SPICE studies: description, raster, spectral windows | never (`./spice_meta.py ... --refresh`) |
@@ -187,6 +189,26 @@ EUI files are downloaded from the EUI team's server at ROB (https://data.observa
 the same files, about 6x faster than SOAR), other files from SOAR.
 
 Deleting a file or folder there only means it is fetched again when needed.
+
+**All metadata is cached** (bulk download 2026-11-04): SOAR every month since 2020-02 (119 MB),
+DKIST since 2020-01 (0.5 MB, 3698 datasets), IRIS since 2013-07 (87 MB, ~55,700 observations).
+So any date opens without a metadata query. Known gaps: IRIS has no observations 2018-10-27 to
+mid-December 2018 (checked in HCR, not a download failure); Solar Orbiter has no remote-sensing
+files in parts of the 2020-21 cruise phase.
+
+**Updating** (the cache is never refreshed by itself; recent months were saved as they were:
+on 2026-11-04 SOAR 2026-05 to 2026-11 were not yet released, IRIS and DKIST 2026-11 partial):
+
+```bash
+./soar_meta.py --from 2026-05 --to 2026-11 --refresh   # Solar Orbiter: all browser products, FSI, SPICE studies
+./iris_meta.py 2026-10-01 2026-11-30 --refresh         # IRIS (level-2 entries of recent days come later)
+./dkist_meta.py 2026-11-01 2026-11-30 --refresh        # DKIST
+./soar_meta.py --all; ./iris_meta.py --all; ./dkist_meta.py --all   # months added since (cached ones skipped)
+```
+
+Then restart `browse_web.py` (it keeps loaded months in memory). `find_obs.py --refresh`
+refreshes only the products it is given (default HRIEUV and PHI-HRT), not FSI or the SPICE
+studies, so use `soar_meta.py` for the browsers.
 
 Beware: long SOAR TAP responses are often cut off without any error (on 2025-11-03 a
 month of HRIEUV rows, 34k, came back with 21k-29k rows in six tries; the rows come in
@@ -208,6 +230,7 @@ minutes; after that it is read from the cache.
 ./plot_fov.py 2025-10-20T12:30 --positions      # + panel with the spacecraft positions and Parker spirals
 ./plot_fov.py 2025-10-30T19:30 --window 24h --connect PSP "Solar Orbiter" "Earth / L1" --speeds 350-750
 ./dkist_meta.py 2025-10-01 2025-10-31          # what DKIST observed (bounding boxes, lines)
+./iris_meta.py 2025-10-10 2025-10-17 --pole    # what IRIS observed at the poles
 ```
 
 Products (`--products`): `hri174` (HRIEUV, normal and short exposures), `hrilya`,
@@ -246,6 +269,10 @@ file within 1 h, else 6 h, else 1 day: the time used is in the panel title).
 - DKIST FOVs (`dkist_meta.py`, datasets within `--dkist-window`, default 3 h): as
   observed on AIA; on FSI as the coronal Solar Orbiter FOVs on AIA (footprint, off-limb
   part dashed going up).
+- IRIS FOVs (`browse_web.py` only; `iris_meta.corners`): the slit-jaw area (pale; the
+  slit-jaw field moves with the slit, so it covers about raster width + one image) and the
+  raster area (coral), centred on the pointing at the start, rotated by the roll; drawn
+  like DKIST (as observed on AIA, off-limb part going up on FSI).
 - Spacecraft (`--spacecraft`, default PSP; JPL Horizons positions shared with
   `plot_positions.py`): sub-spacecraft point and limb on both images. Solar Orbiter's
   limb is always on the AIA image, Earth's on the FSI image.

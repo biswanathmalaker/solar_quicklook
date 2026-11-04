@@ -500,3 +500,53 @@ def download(filename, folder, overwrite=False):
             f.write(chunk)
     tmp.replace(path)
     return path
+
+
+FIRST_MONTH = pd.Timestamp("2020-02-01")   # Solar Orbiter launched 2020-02-10
+
+
+def fetch_all(start=FIRST_MONTH, end=None, refresh=False):
+    """Cache, for every month from start to now, what browse.py / browse_web.py load for a
+    month (browse.MetaStore.month): the pointed products with their pointing (FOV tables,
+    then headers), FSI 174 / 304 and the SPICE studies. Months already cached are read from
+    cache/soar/ (fast), unless refresh (query SOAR again, e.g. for data released since); a
+    month that fails is reported and fetched on the next run."""
+    ms = months(start, end or pd.Timestamp.now())
+    print(f"SOAR: {len(ms)} months {ms[0]:%Y-%m} .. {ms[-1]:%Y-%m}")
+    failed = []
+    for k, m in enumerate(ms):
+        t, last = time.time(), m + pd.offsets.MonthBegin(1) - pd.Timedelta("1us")
+        print(f"[{k + 1}/{len(ms)}] {m:%Y-%m}", flush=True)
+        try:
+            f = files(m, last, POINTED, refresh=refresh)
+            fsi = files(m, last, ["fsi174", "fsi304"], refresh=refresh, headers=False)
+            if len(f) and (f["product"] == "spice").any():
+                spice_modes(m, refresh=refresh)
+            print(f"  {m:%Y-%m}: {len(f)} pointed files, {len(fsi)} FSI ({time.time() - t:.0f} s)", flush=True)
+        except Exception as e:
+            print(f"  {m:%Y-%m} failed: {e}", flush=True)
+            failed.append(m)
+    print("done: " + (f"failed (run again): {', '.join(f'{m:%Y-%m}' for m in failed)}" if failed else "all months cached"))
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Cache the SOAR metadata the browsers use, by month (see the module docstring); "
+                    "file tables: ./find_obs.py",
+        epilog="./soar_meta.py --all                                      every month since 2020-02 not yet cached\n"
+               "./soar_meta.py --from 2026-05 --to 2026-11 --refresh      query these months again (new releases)",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--all", action="store_true", help="every month since 2020-02 (hours the first time)")
+    ap.add_argument("--from", dest="start", help="first month, e.g. 2026-05")
+    ap.add_argument("--to", dest="end", help="last month (default now)")
+    ap.add_argument("--refresh", action="store_true", help="query SOAR again instead of the cache")
+    args = ap.parse_args()
+    if not (args.all or args.start):
+        ap.error("nothing to do: give --all or --from")
+    start = pd.Timestamp(args.start) if args.start else FIRST_MONTH
+    fetch_all(start, pd.Timestamp(args.end) if args.end else None, args.refresh)
+
+
+if __name__ == "__main__":
+    main()

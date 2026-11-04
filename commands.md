@@ -32,7 +32,7 @@ Keys in `plot_ref_file.py`: left click = mark, `u` = undo, `b` / `n` = previous 
 | `... --port 5007 --no-show` | Other port; do not open a browser tab |
 | `./browse.py` | Old matplotlib browser (being replaced) |
 
-In the web page: timeline (hover = details, click = go there, wheel = zoom time); images: wheel = zoom, drag = pan, hover inside a FOV = its block, line below = cursor helioprojective x, y and Stonyhurst lon, lat, μ; date box + Enter; ◀ / ▶ = step by the cadence; tabs: summary, Solar Orbiter files, DKIST, positions; *positions* = PSP / Solar Orbiter sub-points, limbs and source regions + polar plot; *download original data* = full-resolution AIA (JSOC) + Solar Orbiter files of the step; *show Solar Orbiter originals* = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution.
+In the web page: timeline (hover = details, click = go there, wheel = zoom time); images: wheel = zoom, drag = pan, hover inside a FOV = its block, line below = cursor helioprojective x, y and Stonyhurst lon, lat, μ; date box + Enter; ◀ / ▶ = step by the cadence; IRIS slit-jaw (pale) and raster (coral) boxes; tabs: summary, Solar Orbiter files, DKIST, IRIS (programme, channels, level-2 links), positions; *positions* = PSP / Solar Orbiter sub-points, limbs and source regions + polar plot; *download original data* = full-resolution AIA (JSOC) + Solar Orbiter files of the step; *show Solar Orbiter originals* = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution.
 
 In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or ← / → = step by the cadence; cadence and AIA channel buttons; *show* = which FOVs to draw; *positions* = spacecraft positions window; *original data* = download full-resolution AIA and the Solar Orbiter files of the step.
 
@@ -50,6 +50,8 @@ In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or �
 | `... --refresh` | Query SOAR again (new releases) instead of the cache |
 | `... --no-headers` | Skip the slow FITS-header queries |
 | `... --no-soop-info` | Do not list the SOOP summary entries |
+| `./soar_meta.py --all` | Fetch the metadata the browsers use for every month since 2020-02 not yet in the cache (hours the first time; run again for months that failed) |
+| `./soar_meta.py --from 2026-05 --to 2026-11 --refresh` | Query these months again (newly released data) |
 
 ## Fields of view on the full disk
 
@@ -71,16 +73,33 @@ In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or �
 | `... --zoom` | Zoom on the Solar Orbiter FOVs |
 | `... --no-show` | Only save the figure |
 
-## DKIST, SOOPs and SPICE studies
+## DKIST, IRIS, SOOPs and SPICE studies
 
 | Command | What it does |
 |---|---|
 | `./spice_meta.py solo_L2_spice-n-ras_20251020T113040_V05_352321876-008-DR6.fits` | The file's SPICE study: description, raster, exposure, spectral lines |
 | `./dkist_meta.py 2025-10-01 2025-10-31` | DKIST datasets: instrument, times, FOV box, proposal, lines |
 | `./dkist_meta.py 2025-10-01 2025-10-31 --refresh` | Same, querying DKIST again instead of the cache |
+| `./dkist_meta.py --all` | Fetch every month since 2020-01 not yet in the cache (~2 min) |
+| `./iris_meta.py 2025-10-10 2025-10-17` | IRIS observations: times, OBSID, pointing, roll, raster size, aim, planner |
+| `... --pole` | Only polar pointings (\|y\| > 800″) |
+| `... --long` | Also the programme, raster (steps, cadence, exposure), slit-jaw channels, data size and link |
+| `... --refresh` | Query LMSAL HCR again instead of the cache |
+| `./iris_meta.py --all` | Fetch every month since 2013-07 not yet in the cache (~40 s a month; run again for months that failed) |
 | `./soops.py` | All runs in ESA's SOOP summary |
 | `./soops.py Polar` | Runs whose SOOP name contains "Polar" |
 | `./soops.py --date 2025-10-20` | Runs covering this date |
+
+## Update the cache with new releases
+
+All metadata is in `cache/` (SOAR since 2020-02, DKIST since 2020-01, IRIS since 2013-07) and is never queried again by itself. Recent months were saved as they were (on 2026-11-04: SOAR 2026-05 to 2026-11 incomplete, not yet released; IRIS and DKIST 2026-11 partial). To update them, then restart `browse_web.py`:
+
+| Command | What it does |
+|---|---|
+| `./soar_meta.py --from 2026-05 --to 2026-11 --refresh` | Solar Orbiter: all products the browsers use, FSI, SPICE studies |
+| `./iris_meta.py 2026-10-01 2026-11-30 --refresh` | IRIS (also the month before, if the start is within 2 days of it) |
+| `./dkist_meta.py 2026-11-01 2026-11-30 --refresh` | DKIST (also the month before, if the start is within 1 day of it) |
+| `./soar_meta.py --all`, `./iris_meta.py --all`, `./dkist_meta.py --all` | Add the months since the last bulk download (cached months are skipped) |
 
 ## Help
 

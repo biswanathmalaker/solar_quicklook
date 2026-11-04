@@ -3,25 +3,26 @@
 The time browser in a web page (Panel + Bokeh on localhost): what was observed when, and
 where. It replaces browse.py (same data, same cache), faster and with zoom / pan / hover.
 
-  timeline   one row per instrument (HRIEUV, HRI-Lya, PHI-HRT, SPICE, FSI, DKIST): a bar per
-             observing block (Solar Orbiter), FSI run or DKIST dataset of the months loaded so
-             far; hover for details, click to go to that time; the shaded band is the step.
+  timeline   one row per instrument (HRIEUV, HRI-Lya, PHI-HRT, SPICE, FSI, IRIS, DKIST): a bar
+             per observing block (Solar Orbiter), FSI run, IRIS observation or DKIST dataset of
+             the months loaded so far; hover for details, click to go to that time; the shaded band is the step.
              Wheel zooms the time axis, drag pans it.
   AIA        (Earth view; synoptic 1024x1024, 2-min cadence) with the Solar Orbiter FOVs:
              the part on Solar Orbiter's disk as its footprint on the surface (solid where AIA
              sees it, dotted behind the disk); the part off Solar Orbiter's limb (corona;
              HRIEUV, HRI-Lya, SPICE) dashed, going up off the limb (plot_fov.project; PHI-HRT
-             sees no corona: its outline follows Solar Orbiter's limb); DKIST FOVs, Solar Orbiter's sub-point and limb, and a 15° grid
+             sees no corona: its outline follows Solar Orbiter's limb); DKIST FOVs, IRIS slit-jaw (pale) and raster (coral) areas (iris_meta.py), Solar Orbiter's sub-point and limb, and a 15° grid
   FSI 174    (Solar Orbiter view, nearest image within a day; shown when HRI / PHI-HRT /
              SPICE observed in the step) with the FOVs as observed (dashed off the limb), DKIST
-             FOVs the same way as the coronal ones on AIA, Earth's sub-point and limb
+             and IRIS FOVs the same way as the coronal ones on AIA, Earth's sub-point and limb
              Both images: wheel zooms, drag pans, box zoom, reset; the zoom is kept when
              stepping. Below each image: the cursor position, helioprojective x, y (arcsec) and
              Stonyhurst lon, lat and mu (off the disk: the distance from the centre in Rsun).
              Hover inside a FOV for its block: time range, cadence, files, size, where.
   tabs       summary (what each instrument measures, cadence, time range, SOOP and its aim,
-             SPICE study and lines, FSI, DKIST; as in browse.py), Solar Orbiter files of the
-             step, DKIST datasets of the step
+             SPICE study and lines, FSI, DKIST; as in browse.py; and IRIS), Solar Orbiter files of
+             the step, DKIST datasets of the step, IRIS observations of the step (aim, planner,
+             programme, raster, slit-jaw channels, lines, level-2 links)
   controls   date (UTC, Enter), << / >> by the cadence, cadence, AIA channel, which
              observations to draw, and
     positions                    (on / off) PSP and Solar Orbiter on both images: sub-point (x;
@@ -75,6 +76,7 @@ from sunpy.coordinates import get_earth
 
 import browse as br
 import dkist_meta as dm
+import iris_meta as im
 import plot_fov as pf
 import soar_meta as sm
 import soops
@@ -87,8 +89,11 @@ LIGHT_N = 1024
 FULL_N = 2048                           # full-resolution AIA and the Solar Orbiter originals
 BLOS_RANGE = 100                        # G, grey scale of PHI-HRT B_LOS
 SC_NAMES = ["Solar Orbiter", "PSP"]     # "positions": these, with their source regions
-DEFAULTS = {"wavelength": 171, "cadence": "1h", "show": br.SHOW, "date": "2025-10-20T12:00:00", "positions": False}
-ROWS = ["HRIEUV", "HRI-Lya", "PHI-HRT", "SPICE", "FSI", "DKIST"]     # timeline, top down
+SHOW = br.SHOW + ["IRIS"]              # what can be drawn (the "show" buttons)
+DEFAULTS = {"wavelength": 171, "cadence": "1h", "show": SHOW, "date": "2025-10-20T12:00:00", "positions": False}
+ROWS = ["HRIEUV", "HRI-Lya", "PHI-HRT", "SPICE", "FSI", "IRIS", "DKIST"]     # timeline, top down
+IRIS_COLOR = pf.IRIS_COLORS["raster"]
+IRIS_MAX = 4                            # IRIS observations described in the summary, per step
 FSI_COLOR = "#9a9a9a"
 FSI_RUN_GAP = pd.Timedelta("1h")
 PANEL_PX = 500
@@ -104,9 +109,13 @@ def lock_for(key):
 
 def load_settings():
     try:
-        return DEFAULTS | json.loads(SETTINGS.read_text())
+        s = DEFAULTS | json.loads(SETTINGS.read_text())
     except (FileNotFoundError, ValueError):
-        return dict(DEFAULTS)
+        s = dict(DEFAULTS)
+    # "show" buttons added since the settings were saved start switched on
+    s["show"] = [n for n in SHOW if n in s["show"] or n not in s.get("offered", br.SHOW)]
+    s["offered"] = SHOW
+    return s
 
 
 def save_settings(s):
@@ -262,6 +271,14 @@ class WebStep:
         except Exception as e:   # network trouble: no DKIST, the rest is shown
             status(f"DKIST: {e}")
             self.dkist = pd.DataFrame()
+        try:   # LMSAL HCR, a month at a time (~40 s the first time, then cache/iris/)
+            new = [m for m in sm.months(self.t0 - pd.Timedelta("2D"), self.t1) if m not in im.MONTHS]
+            if new:
+                status(f"IRIS observations {', '.join(f'{m:%Y-%m}' for m in new)} (LMSAL HCR) ...")
+            self.iris = im.observations(self.t0, self.t1, verbose=False)
+        except Exception as e:
+            status(f"IRIS: {e}")
+            self.iris = pd.DataFrame()
         self.fsi = None
         if len(self.blocks) and len(fsi):
             g = fsi[fsi["product"] == "fsi174"]
@@ -336,7 +353,95 @@ class WebStep:
                 if self.fsi is not None:   # off-limb DKIST (corona) goes up off the limb on FSI too
                     x, y, kind = pf.project(tx, ty, earth, obs(self.fsi), coronal=True)
                     out["fsi"].append(base | dict(x=x, y=y, kind=kind))
+        # IRIS (Earth view, pointing at the start): slit-jaw area and spectrograph raster area;
+        # on FSI the off-limb part goes up off the limb, as DKIST (chromosphere / TR above the limb)
+        earth = obs(self.aia)
+        for _, r in (self.iris.iterrows() if len(self.iris) else []):
+            for which in ("sji", "raster"):
+                c = im.corners(r, which)
+                if c is None:
+                    continue
+                tx, ty = pf.box_outline(c)
+                base = dict(show="IRIS", label=f"IRIS {'slit-jaw' if which == 'sji' else 'raster'}",
+                            color=pf.IRIS_COLORS[which], tip=iris_tip(r, which))
+                x, y, kind = observed_on(tx, ty, earth)
+                out["aia"].append(base | dict(x=x, y=y, kind=kind))
+                if self.fsi is not None:
+                    x, y, kind = pf.project(tx, ty, earth, obs(self.fsi), coronal=True)
+                    out["fsi"].append(base | dict(x=x, y=y, kind=kind))
         return out
+
+
+# ---------------------------------------------------------------- IRIS in words
+
+def iris_when(r):
+    end = f"{r.end:%H:%M}" if r.end.date() == r.start.date() else f"{r.end:%m-%d %H:%M}"
+    return f"{r.start:%Y-%m-%d %H:%M} - {end} ({br.fmt_td(r.end - r.start)})"
+
+
+def iris_where(r, img):
+    """Pointing in words, with the latitude of the centre seen from img's observer (Earth)."""
+    lon, lat = sm.hpc_to_hgs(np.array([r.xcen]), np.array([r.ycen]), *obs(img))
+    where = (f"lat {lat[0]:+.0f}°, lon {lon[0]:+.0f}°" if np.isfinite(lat[0])
+             else f"off the limb, {np.hypot(r.xcen, r.ycen) / img['rsun']:.2f} Rsun")
+    roll = f", roll {r.roll:.0f}°" if np.isfinite(r.roll) and abs(r.roll) > 0.5 else ""
+    return f"centre ({r.xcen:+.0f}\", {r.ycen:+.0f}\") from Earth, {where}{roll}"
+
+
+def iris_tip(r, which):
+    area = (f"raster area {r.raster_w:.0f}\"x{r.raster_h:.0f}\"" if which == "raster"
+            else f"slit-jaw area {r.cover_w:.0f}\"x{r.cover_h:.0f}\" (one image {r.sji_w:.0f}\"x{r.sji_h:.0f}\")")
+    return dict(name=f"IRIS {'raster' if which == 'raster' else 'slit-jaw'}, OBSID {r.obsid}", when=iris_when(r),
+                cadence=im.raster_text(r) if which == "raster" else im.sji_text(r),
+                where=f"{area}; centre ({r.xcen:+.0f}\", {r.ycen:+.0f}\") from Earth",
+                soop=f"{r.aim} (planner {r.planners})")
+
+
+def iris_lines(st):
+    """Summary lines [(text, colour)] for the IRIS observations of the step."""
+    d = st.iris
+    if not len(d):
+        return [("IRIS      no observation in this step", br.DIM)]
+    lines = [("IRIS      UV spectrograph along a slit (C II, Si IV, Mg II h/k: chromosphere to transition region) "
+              "and slit-jaw images around the slit", IRIS_COLOR)]
+    for k, (_, r) in enumerate(d.iterrows()):
+        if k == IRIS_MAX:
+            lines.append((f"{'':10}+ {len(d) - IRIS_MAX} more IRIS observation(s) in this step (IRIS tab)", br.DIM))
+            break
+        lines.append((f"{'':10}{iris_when(r)}: OBSID {r.obsid}, aim: {r.aim} (planner {r.planners}); "
+                      f"{iris_where(r, st.aia)}", br.DIM))
+        lines.append((f"{'':12}spectra: {im.raster_text(r)}; programme \"{r.goal}\"", br.DIM))
+        lines.append((f"{'':12}images: {im.sji_text(r)}", br.DIM))
+    return lines
+
+
+def iris_html(st):
+    """The IRIS tab: each observation of the step with its programme, channels and data links."""
+    d = st.iris
+    if not len(d):
+        return '<span style="color:#888">no IRIS observation in this step</span>'
+    esc = html.escape
+    out = []
+    for _, r in d.iterrows():
+        sji = [f"{c} Å {im.SJI_ABOUT.get(int(c), '')}" for c in r.sji_channels.split(",") if c]
+        links = [f'<a href="{esc(r.url)}" target="_blank">IRIS data page</a>'] if r.url else []
+        for g in r.groups:
+            url, mb = im._text(g.get("comp_data_url")), im._num(g.get("comp_data_size_mb"))
+            if url:
+                name = im._text(g.get("group_name"))
+                links.append(f'<a href="{esc(url)}" target="_blank">{esc(name if name == "Raster" else "SJI " + name)}</a>'
+                             + (f" ({mb:.0f} MB)" if np.isfinite(mb) and mb > 0 else ""))
+        rows = [("aim", f"{r.aim} &nbsp; <span style='color:#999'>planner {esc(r.planners)}, target {esc(r.target)}</span>"),
+                ("programme", esc(r.goal)), ("pointing", esc(iris_where(r, st.aia))),
+                ("spectra", esc(im.raster_text(r))), ("slit-jaw", esc(im.sji_text(r)) + "<br>" + "<br>".join(map(esc, sji))),
+                ("lines", esc(r.lines)), ("level 2", f"{r.size_mb:.0f} MB compressed: " + " · ".join(links))]
+        body = "".join(f'<tr><td style="color:#999;vertical-align:top;padding-right:8px">{k}</td><td>{v}</td></tr>'
+                       for k, v in rows)
+        out.append(f'<div style="margin-bottom:12px"><b style="color:{IRIS_COLOR}">{esc(iris_when(r))} &nbsp; OBSID {r.obsid}'
+                   f'</b><table style="font-size:12px">{body}</table></div>')
+    return ('<div style="font-size:12px;color:#ddd;background:#1a1a1a;padding:8px;border-radius:4px">'
+            f'<div style="color:#999;margin-bottom:6px">{len(d)} IRIS observation(s) in this step '
+            '(LMSAL HCR; pointing at the start, Earth view). Links: level-2 data at LMSAL.</div>' + "".join(out) + "</div>")
 
 
 # ---------------------------------------------------------------- timeline data
@@ -364,6 +469,13 @@ def timeline_month(month):
                 rows.append(dict(row="FSI", start=x.start.iloc[0], end=x.start.iloc[-1], color=FSI_COLOR,
                                  name="FSI 174", info=f"{len(x)} images, one every {br.fmt_s(cad)}"))
     return rows
+
+
+def timeline_iris(d):
+    """Bars of the IRIS observations of a month (iris_meta.month_table)."""
+    return [dict(row="IRIS", start=r.start, end=r.end, color=IRIS_COLOR, name=f"IRIS OBSID {r.obsid}",
+                 info=f"{r.aim} ({r.planners}); ({r.xcen:+.0f}\", {r.ycen:+.0f}\"); {r.goal}")
+            for _, r in (d.iterrows() if len(d) else [])]
 
 
 def timeline_dkist(m):
@@ -655,7 +767,7 @@ def image_figure(title):
     p.text("x", "y", text="text", source=src["mark"], text_color="color", text_font_size="11px",
            x_offset=8, y_offset=-4)
     p.add_tools(HoverTool(renderers=[patch], tooltips=[("", "@name"), ("time", "@when"), ("files", "@cadence"),
-                                                       ("FOV", "@where"), ("SOOP", "@soop")]))
+                                                       ("FOV", "@where"), ("campaign", "@soop")]))
     p.legend.location = "bottom_left"
     p.legend.background_fill_alpha = 0.5
     p.legend.background_fill_color = "black"
@@ -678,6 +790,7 @@ class App:
         self.status_text = ""
         self.months_drawn = set()
         self.tl_rows = {}         # month -> bars
+        self.iris_rows = {}       # month -> IRIS bars
         self.first = {"aia": True, "fsi": True}
         self.orig_job = self.solo_job = None
         self.slow = ThreadPoolExecutor(max_workers=1)    # original data downloads (JSOC: minutes)
@@ -689,7 +802,7 @@ class App:
         self.cad = pn.widgets.Select(name="cadence", options=list(br.CADENCES), value=self.s["cadence"], width=90)
         self.wl = pn.widgets.Select(name="AIA (Å)", options=[str(w) for w in br.WAVELENGTHS],
                                     value=str(self.s["wavelength"]), width=90)
-        self.show = pn.widgets.CheckButtonGroup(name="show", options=br.SHOW, value=list(self.s["show"]))
+        self.show = pn.widgets.CheckButtonGroup(name="show", options=SHOW, value=list(self.s["show"]))
         self.orig_btn = pn.widgets.Button(name="download original data", button_type="primary", width=180,
                                           description="full-resolution AIA (JSOC, 1-3 min) and the Solar Orbiter "
                                                       "files nearest the time; kept in cache/")
@@ -735,12 +848,13 @@ class App:
         self.summary = pn.pane.HTML("", sizing_mode="stretch_both")
         self.files_tab = pn.widgets.Tabulator(pd.DataFrame(), disabled=True, show_index=False, sizing_mode="stretch_both")
         self.dkist_tab = pn.widgets.Tabulator(pd.DataFrame(), disabled=True, show_index=False, sizing_mode="stretch_both")
+        self.iris_tab = pn.pane.HTML("", sizing_mode="stretch_both")
         self.title = pn.pane.HTML("", styles={"font-size": "15px", "color": "#eeeeee"})
         self.fig_pos, self.src_pos = positions_figure()
         self.pos_table = pn.pane.HTML("", sizing_mode="stretch_width")
         self.pos_note = pn.pane.HTML('<span style="color:#888">press "positions" to see where the spacecraft are</span>')
         self.tabs = pn.Tabs(("summary", self.summary), ("Solar Orbiter files", self.files_tab), ("DKIST", self.dkist_tab),
-                            ("positions", pn.Column(self.pos_note, pn.pane.Bokeh(self.fig_pos), self.pos_table)),
+                            ("IRIS", self.iris_tab), ("positions", pn.Column(self.pos_note, pn.pane.Bokeh(self.fig_pos), self.pos_table)),
                             sizing_mode="stretch_both", min_width=480)
         controls = pn.Row(self.date, self.back, self.fwd, self.cad, self.wl,
                           pn.Column(pn.pane.HTML("show", styles={"color": "#aaaaaa", "font-size": "12px"}),
@@ -789,7 +903,7 @@ class App:
         self.s["positions"] = bool(event.new)
         save_settings(self.s)
         if event.new:
-            self.tabs.active = 3
+            self.tabs.active = len(self.tabs) - 1     # positions
         self.go(self.t)
 
     def shown_products(self):
@@ -857,7 +971,7 @@ class App:
     def poll(self):
         if self.status.object != self.status_text:
             self.status.object = self.status_text
-        if set(STORE.months) - self.months_drawn:
+        if set(STORE.months) - self.months_drawn or set(im.MONTHS) - set(self.iris_rows):
             self.draw_timeline()
         if self.orig_job is not None and self.orig_job.done():
             job, self.orig_job = self.orig_job, None
@@ -911,7 +1025,10 @@ class App:
             if m not in self.tl_rows:
                 self.tl_rows[m] = timeline_month(STORE.months[m]) + timeline_dkist(m)
         self.months_drawn = set(STORE.months)
-        rows = [x for v in self.tl_rows.values() for x in v]
+        for m in list(im.MONTHS):
+            if m not in self.iris_rows:
+                self.iris_rows[m] = timeline_iris(im.MONTHS[m])
+        rows = [x for v in list(self.tl_rows.values()) + list(self.iris_rows.values()) for x in v]
         df = pd.DataFrame(rows, columns=["row", "start", "end", "color", "name", "info"])
         if len(df):   # instantaneous blocks: at least a minute wide
             df["end"] = df[["end"]].assign(m=df.start + pd.Timedelta("1min")).max(axis=1)
@@ -968,7 +1085,10 @@ class App:
         show_dk = "DKIST" in self.s["show"]
         dk_all = st.dkist if (show_dk and len(st.dkist)) else pd.DataFrame()
         lines = br.summary_lines(st, blocks, dk_all, show_dk, width=100000)
+        if "IRIS" in self.s["show"]:
+            lines += iris_lines(st)
         self.summary.object = summary_html(lines)
+        self.iris_tab.object = iris_html(st)
         f = st.files
         if len(f):
             f = f[(f.start >= st.t0) & (f.start <= st.t1) & f["product"].isin(shown_products)]

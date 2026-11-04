@@ -79,8 +79,9 @@ L1 = "Earth / L1"
 EARTH_COLOR = "deepskyblue"
 DKIST_COLORS = {"VBI": "white", "VISP": "red", "DL-NIRSP": "cornflowerblue", "CRYO-NIRSP": "mediumorchid", "VTF": "chocolate"}
 DKIST_OTHER = "silver"
-assert len(set(COLORS.values()) | set(DKIST_COLORS.values()) | {DKIST_OTHER}) == \
-    len(set(LABELS.values())) + len(DKIST_COLORS) + 1, "two instruments share a FOV colour"
+IRIS_COLORS = {"raster": "coral", "sji": "peachpuff"}    # spectrograph raster area, slit-jaw area (browse_web)
+assert len(set(COLORS.values()) | set(DKIST_COLORS.values()) | {DKIST_OTHER} | set(IRIS_COLORS.values())) == \
+    len(set(LABELS.values())) + len(DKIST_COLORS) + 1 + len(IRIS_COLORS), "two instruments share a FOV colour"
 OUTLINE = [patheffects.withStroke(linewidth=2.5, foreground="black")]
 N_EDGE = 80     # points per FOV edge, so the reprojected edges can bend
 MARGIN = 10     # deg, default margin around a connectivity region
