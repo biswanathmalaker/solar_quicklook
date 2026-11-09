@@ -59,16 +59,33 @@ Everything for a name goes in <name>/<wavelength>/ (frames, saved figures).
    What IRIS observed (pointing, raster, slit-jaw channels, aim, planner; LMSAL HCR):
      ./iris_meta.py 2025-10-10 2025-10-17 --pole --long
 
+   Keyword search in all cached metadata (Solar Orbiter blocks + SOOP texts, FSI, IRIS, DKIST):
+     ./search_meta.py "coronal hole, plume"     ./search_meta.py "coronal hole, polar" --inst IRIS SPICE --from 2023-01
+   keywords: comma = OR; two or more instruments = only times when all observed together (AND)
+   Same time AND a common part of the Sun (no keywords):
+     ./fov_search.py PHI-HRT IRIS --from 2025-10 --to 2025-11     ./fov_search.py HRIEUV PHI-HRT SPICE --min 50
+     --mu 0.3 (SO vs Earth: seen at mu >= 0.3 from both; default 0.1)   --mosaics (IRIS full-disk mosaics)
+     ./fov_search.py HRIEUV --without IRIS          (times IRIS is on the FOV cut out; one instrument is enough)
+     ./fov_search.py HRIEUV PHI-HRT --without IRIS DKIST      --left 10 (drop pieces under 10 min; default 5)
+
 10. ESA SOOP summary (from soops-summary.html; save a newer copy of the web page over it to update):
-     ./soops.py Polar               ./soops.py --date 2025-10-20
+     ./soops.py Polar               ./soops.py --date 2025-10-20      ./soops.py --pages (all SOOP aims, once)
 
 11. Browse through time in the web browser (http://localhost:5006/browse; settings kept):
      ./browse_web.py                ./browse_web.py 2025-10-20T12:00
    timeline: hover = details, click = go there, wheel = zoom time; images: wheel zoom, drag pan,
-   hover inside a FOV = its block; below each image = cursor x, y (arcsec), lon, lat, mu; ◀ / ▶ = step; tabs: summary, Solar Orbiter files, DKIST, IRIS, positions
+   hover inside a FOV = its block; below each image = cursor x, y (arcsec), lon, lat, mu; below the timeline = cursor time
+   ◀ / ▶ = step; tabs: summary, Solar Orbiter files, DKIST, IRIS, search, positions
+   search metadata (3rd row): keywords (comma = OR) + instruments (2 or more = observed together, AND),
+   Enter -> results in the search tab, click = go there
+   common FOV of (4th row): instruments (2 or more), without (red, struck through: must NOT be on that FOV;
+     then 1 instrument is enough), from / to, min % (common area), min mu, IRIS mosaics, find
+     -> sets observed at the same time on a common part of the Sun, in the common FOV tab
+   the four control rows stay at the top when the page is scrolled
+   display of <image> = stretch, vmin / vmax (blank: auto), colour map, reversed, per image kind (kept)
    IRIS = slit-jaw (pale) and raster (coral) boxes, off-limb part dashed
    positions = PSP / Solar Orbiter sub-points, limbs, source regions + polar plot
-   download original data = full-res AIA (JSOC, 1-3 min) + Solar Orbiter files of the step (cache/)
+   download original data = full-res AIA (JSOC, 1-3 min; else VSO NASA mirror; a failure is shown) + Solar Orbiter files of the step (cache/)
    show Solar Orbiter originals = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution
    Old matplotlib version (AIA + what Solar Orbiter / DKIST observed in each step):
      ./browse.py                    ./browse.py 2025-10-20T12:00

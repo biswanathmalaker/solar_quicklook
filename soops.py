@@ -85,13 +85,17 @@ def page(soop, refresh=False):
     except requests.RequestException:
         return None
     t = r.text
-    i = t.find("General description")
-    if i < 0:
-        return None
+    label = "General description"
+    i = t.find(label)
+    if i < 0:   # some pages head it "Description"
+        m = re.search(r">\s*Description\s*<", t)
+        if not m:
+            return None
+        i, label = m.start() + 1, "Description"
     body = t[i:]
     end = re.search(r"Default SOOP duration|Observations requirement|Pointing requirements", body)
     desc = _text(re.sub(r"</p>|<br\s*/?>|</li>", " ", body[:end.start() if end else 4000]))
-    desc = desc.replace("General description", "", 1).strip()
+    desc = desc.replace(label, "", 1).strip()
     instruments = []
     j = body.find("Observations requirement")
     if j >= 0:
@@ -143,11 +147,36 @@ def describe(r, width=110):
     return "\n".join(line[:width] for line in lines if line)
 
 
+def fetch_pages(refresh=False):
+    """The description page of every SOOP in the summary or in the cached SOAR metadata
+    (cache/soops/pages/; cached ones skipped)."""
+    names = set(table().soop_full.dropna().astype(str))
+    for f in (OUT_DIR / "cache" / "soar").glob("items_*.csv.gz"):   # SOAR names, "A;B" = two SOOPs
+        try:
+            names |= {x.strip() for v in pd.read_csv(f, usecols=["soop_name"]).soop_name.dropna() for x in str(v).split(";")}
+        except (ValueError, pd.errors.EmptyDataError):
+            pass
+    names = sorted(n for n in names if n and n.lower() not in ("none", "not defined"))
+    todo = [n for n in names if refresh or not (PAGES / f"{n}.json").is_file()]
+    print(f"SOOP pages: {len(names)} SOOPs, {len(names) - len(todo)} in the cache, {len(todo)} to fetch")
+    failed = []
+    for n in todo:
+        if page(n, refresh=refresh) is None:
+            failed.append(n)
+    print(f"done; " + (f"no page for {len(failed)}: {', '.join(failed)}" if failed else "all pages cached"))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("soop", nargs="?", help="part of the SOOP name (case insensitive)")
     ap.add_argument("--date", help="runs covering this date (±1 day)")
+    ap.add_argument("--pages", action="store_true",
+                    help="fetch the ESA description page of every SOOP in the summary not yet in cache/soops/pages/")
+    ap.add_argument("--refresh", action="store_true", help="with --pages: fetch the cached pages again too")
     args = ap.parse_args()
+    if args.pages:
+        fetch_pages(args.refresh)
+        return
     df = runs(args.soop, args.date) if (args.soop or args.date) else table()
     for _, r in df.iterrows():
         print(describe(r, width=200))

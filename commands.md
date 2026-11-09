@@ -32,7 +32,7 @@ Keys in `plot_ref_file.py`: left click = mark, `u` = undo, `b` / `n` = previous 
 | `... --port 5007 --no-show` | Other port; do not open a browser tab |
 | `./browse.py` | Old matplotlib browser (being replaced) |
 
-In the web page: timeline (hover = details, click = go there, wheel = zoom time); images: wheel = zoom, drag = pan, hover inside a FOV = its block, line below = cursor helioprojective x, y and Stonyhurst lon, lat, μ; date box + Enter; ◀ / ▶ = step by the cadence; IRIS slit-jaw (pale) and raster (coral) boxes; tabs: summary, Solar Orbiter files, DKIST, IRIS (programme, channels, level-2 links), positions; *positions* = PSP / Solar Orbiter sub-points, limbs and source regions + polar plot; *download original data* = full-resolution AIA (JSOC) + Solar Orbiter files of the step; *show Solar Orbiter originals* = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution.
+In the web page: timeline (hover = details, click = go there, wheel = zoom time, line below = cursor time and its distance from the shown time); *display of* = per image (AIA channel, FSI, each original): stretch (linear, sqrt, square, log, asinh, sinh, power, histogram eq.), vmin / vmax (blank = auto: the central % of values), colour map, reversed, *default*; *search metadata* box (third row) + instrument buttons + Enter = keywords in all cached metadata, comma = OR, two or more instruments = only times all observed together (AND); results in the *search* tab, click a result to go to its start; *common FOV of* (fourth row) + instruments, *without* + instruments that must not observe that FOV (red, struck through; their times are cut out; one instrument is then enough), from / to (blank = all), min % (common area), min μ, *IRIS mosaics* + *find common FOV* = sets of observations at the same time on a common part of the Sun, results in the *common FOV* tab, click to go there; the four control rows stay at the top when scrolling; images: wheel = zoom, drag = pan, hover inside a FOV = its block, line below = cursor helioprojective x, y and Stonyhurst lon, lat, μ; date box + Enter; ◀ / ▶ = step by the cadence; IRIS slit-jaw (pale) and raster (coral) boxes; tabs: summary, Solar Orbiter files, DKIST, IRIS (programme, channels, level-2 links), search, positions; *positions* = PSP / Solar Orbiter sub-points, limbs and source regions + polar plot; *download original data* = full-resolution AIA (JSOC, else the VSO NASA mirror; if both fail the status line says so and the image stays synoptic) + Solar Orbiter files of the step; *show Solar Orbiter originals* = HRIEUV / HRI-Lya / PHI-HRT files nearest the time, full resolution.
 
 In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or ← / → = step by the cadence; cadence and AIA channel buttons; *show* = which FOVs to draw; *positions* = spacecraft positions window; *original data* = download full-resolution AIA and the Solar Orbiter files of the step.
 
@@ -73,7 +73,7 @@ In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or �
 | `... --zoom` | Zoom on the Solar Orbiter FOVs |
 | `... --no-show` | Only save the figure |
 
-## DKIST, IRIS, SOOPs and SPICE studies
+## DKIST, IRIS, SOOPs, SPICE studies and keyword search
 
 | Command | What it does |
 |---|---|
@@ -86,9 +86,22 @@ In the old window: date box + Enter = go to a date; `<<` / `>>`, `b` / `n` or �
 | `... --long` | Also the programme, raster (steps, cadence, exposure), slit-jaw channels, data size and link |
 | `... --refresh` | Query LMSAL HCR again instead of the cache |
 | `./iris_meta.py --all` | Fetch every month since 2013-07 not yet in the cache (~40 s a month; run again for months that failed) |
+| `./search_meta.py "coronal hole, plume"` | Observations in all cached metadata matching any of the comma-separated keywords (OR; case-insensitive; several words = that phrase) |
+| `... --inst IRIS SPICE` | Only these (HRIEUV HRI-Lya PHI-HRT SPICE FSI IRIS DKIST); two or more = only the times when all of them have a matching observation at once (AND) |
+| `... --from 2023-01 --to 2024-12` | Only this time range |
+| `... --max 200` | Print this many (default 50; 0 = all) |
+| `./fov_search.py PHI-HRT IRIS --from 2025-10 --to 2025-11` | Common field of view: sets of observations of all these instruments at the same time overlapping on the Sun (common time, common area as % of the smallest FOV, its centre) |
+| `... --min 50` | Only common areas of at least 50 % of the smallest FOV |
+| `... --mu 0.3` | Solar Orbiter vs Earth: common area seen at μ ≥ 0.3 from both (default 0.1; polar regions ~0.2-0.35 from Earth) |
+| `... --mosaics` | Include IRIS full-disk mosaics (whole disk in HCR for hours, one tile at a time; left out by default) |
+| `./fov_search.py HRIEUV --without IRIS` | Instruments that must NOT observe the common FOV: the times they share any part of it are cut out, pieces of at least 5 min kept; one instrument is then enough (here: HRIEUV with no IRIS on its FOV) |
+| `./fov_search.py HRIEUV PHI-HRT --without IRIS DKIST --left 10` | Several on each side; `--left` = shortest piece kept, in minutes |
+| `./fov_search.py --build` | (Re)build its index from the cache (`cache/fov_search/`, ~3 min the first time) |
+| `./search_meta.py --build` | (Re)build the search index from the cache (`cache/search/`, ~2 min the first time) |
 | `./soops.py` | All runs in ESA's SOOP summary |
 | `./soops.py Polar` | Runs whose SOOP name contains "Polar" |
 | `./soops.py --date 2025-10-20` | Runs covering this date |
+| `./soops.py --pages` | Fetch the ESA description page of every SOOP (summary + SOAR names) not yet cached (`--refresh`: all again) |
 
 ## Update the cache with new releases
 

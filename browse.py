@@ -393,12 +393,12 @@ class Browser:
         if self.orig_job is not None and self.orig_job.done():
             job, self.orig_job = self.orig_job, None
             try:
-                t, solo_paths = job.result()
+                t, solo_paths, problem = job.result()
             except Exception as e:
                 traceback.print_exc()
                 self.set_status(f"original data failed: {e}")
                 return
-            self.set_status("")
+            self.set_status(f"AIA full resolution not downloaded ({problem}); still the synoptic image" if problem else "")
             self.prefetched.clear()
             if t == self.t:
                 self.go(self.t)            # now with the full-resolution AIA frame
@@ -781,21 +781,61 @@ def summary_lines(st, blocks, dk, show_dkist, width=WIDTH):
 
 def fetch_originals(t, wl, have_full, rows, status):
     """Full-resolution AIA frame (unless there) and the Solar Orbiter files; returns
-    (t, [(product, path)])."""
-    import download_ref_file as drf
+    (t, [(product, path)], aia_problem): aia_problem is "" if the AIA frame is there, else why not."""
+    problem = ""
     if not have_full and wl not in EUV:
-        status(f"original data: AIA {wl} full resolution not handled (UV series); Solar Orbiter files only")
+        problem = f"AIA {wl} full resolution is not handled (UV series)"
     elif not have_full:
-        status(f"original data: AIA {wl} full resolution from JSOC (1-3 min) ...")
-        try:
-            drf.download("aia", wl, Time(t.to_pydatetime()), folder=AIA_FULL / str(wl))
-        except Exception as e:
-            status(f"AIA full resolution failed: {e}")
+        problem = fetch_aia_full(t, wl, status)
     paths = []
     for r in rows:
         status(f"original data: {r.filename} ...")
         paths.append((r["product"], sm.download(r.filename, SOLO_FILES / r["product"])))
-    return t, paths
+    return t, paths, problem
+
+
+def _short(e):
+    text = " ".join(str(e).split())
+    return f"{type(e).__name__}: {text[:120]}" if text else type(e).__name__
+
+
+def fetch_aia_full(t, wl, status):
+    """The full-resolution AIA frame nearest t into AIA_FULL/<wl>/: from JSOC (download_ref_file),
+    else from the VSO (NASA SDAC mirror). Returns "" when it is there, else what went wrong."""
+    import download_ref_file as drf
+    import shutil
+    import tempfile
+    import astropy.units as u
+    from sunpy.net import Fido, attrs as a
+    errors = []
+    status(f"original data: AIA {wl} full resolution from JSOC (1-3 min) ...")
+    try:
+        if not drf.download("aia", wl, Time(t.to_pydatetime()), folder=AIA_FULL / str(wl)) and full_res_path(t, wl) is None:
+            errors.append("JSOC: no frame delivered")
+    except Exception as e:
+        errors.append(f"JSOC: {_short(e)}")
+    if full_res_path(t, wl) is not None:
+        return ""
+    status(f"original data: JSOC failed; AIA {wl} full resolution from the VSO (NASA mirror) ...")
+    try:
+        res = Fido.search(a.Time(Time((t - FULL_TOL).to_pydatetime()), Time((t + FULL_TOL).to_pydatetime())),
+                          a.Instrument.aia, a.Wavelength(wl * u.AA))
+        blocks = [b for b in res if len(b) and "VSO" in type(b.client).__name__]
+        if not blocks:
+            errors.append("VSO: no frame found")
+        else:
+            b = blocks[0]
+            k = int(np.argmin([abs((Time(x) - Time(t.to_pydatetime())).sec) for x in b["Start Time"]]))
+            with tempfile.TemporaryDirectory(dir=AIA_FULL) as tmp:
+                got = Fido.fetch(b[k], path=str(Path(tmp) / "{file}"), progress=False)
+                if got.errors or not len(got):
+                    errors.append("VSO: " + (_short(got.errors[0].exception) if got.errors else "nothing delivered"))
+                for f in got:
+                    tf = drf.obs_time(f)
+                    shutil.move(f, AIA_FULL / str(wl) / f"aia_{wl}_{tf.strftime('%Y%m%d_%H%M%S')}.fits")
+    except Exception as e:
+        errors.append(f"VSO: {_short(e)}")
+    return "" if full_res_path(t, wl) is not None else "; ".join(errors)
 
 
 def fmt_td(td):

@@ -6,7 +6,13 @@ where. It replaces browse.py (same data, same cache), faster and with zoom / pan
   timeline   one row per instrument (HRIEUV, HRI-Lya, PHI-HRT, SPICE, FSI, IRIS, DKIST): a bar
              per observing block (Solar Orbiter), FSI run, IRIS observation or DKIST dataset of
              the months loaded so far; hover for details, click to go to that time; the shaded band is the step.
-             Wheel zooms the time axis, drag pans it.
+             Wheel zooms the time axis, drag pans it. Below it: the time under the cursor and how far it
+             is from the shown time.
+  display    "display of" an image kind on the page (AIA <channel>, FSI 174, HRIEUV / HRI-Lya / PHI-HRT
+             original): stretch (linear, sqrt, square, log, asinh, sinh, power, histogram eq.; with
+             its parameter), vmin / vmax (blank: the central % of the values), colour map, reversed;
+             kept per kind in the settings; "default" = the reduced PNG (asinh 0.05, 99.7 %, the
+             map's colour map; PHI-HRT linear +-100 G grey). Drawn from the reduced values (.npy).
   AIA        (Earth view; synoptic 1024x1024, 2-min cadence) with the Solar Orbiter FOVs:
              the part on Solar Orbiter's disk as its footprint on the surface (solid where AIA
              sees it, dotted behind the disk); the part off Solar Orbiter's limb (corona;
@@ -22,7 +28,14 @@ where. It replaces browse.py (same data, same cache), faster and with zoom / pan
   tabs       summary (what each instrument measures, cadence, time range, SOOP and its aim,
              SPICE study and lines, FSI, DKIST; as in browse.py; and IRIS), Solar Orbiter files of
              the step, DKIST datasets of the step, IRIS observations of the step (aim, planner,
-             programme, raster, slit-jaw channels, lines, level-2 links)
+             programme, raster, slit-jaw channels, lines, level-2 links), search (results of the
+             "search metadata" row: keywords in all the cached metadata of the chosen instruments,
+             search_meta.py; click a result to go to its start)
+  common FOV "common FOV of" row (fov_search.py): instruments (two or more), without (instruments that must
+             not observe that FOV: their times are cut out; one instrument is then enough), from / to,
+             min % (common area), min mu (Solar Orbiter vs Earth), IRIS mosaics:
+             sets of observations at the same time overlapping on the Sun; "common FOV" tab, click = go there
+  header     the four control rows (date / buttons, display, search, common FOV) stay at the top when scrolling
   controls   date (UTC, Enter), << / >> by the cadence, cadence, AIA channel, which
              observations to draw, and
     positions                    (on / off) PSP and Solar Orbiter on both images: sub-point (x;
@@ -76,8 +89,10 @@ from sunpy.coordinates import get_earth
 
 import browse as br
 import dkist_meta as dm
+import fov_search as fs
 import iris_meta as im
 import plot_fov as pf
+import search_meta as sx
 import soar_meta as sm
 import soops
 import spice_meta as sp
@@ -90,12 +105,72 @@ FULL_N = 2048                           # full-resolution AIA and the Solar Orbi
 BLOS_RANGE = 100                        # G, grey scale of PHI-HRT B_LOS
 SC_NAMES = ["Solar Orbiter", "PSP"]     # "positions": these, with their source regions
 SHOW = br.SHOW + ["IRIS"]              # what can be drawn (the "show" buttons)
-DEFAULTS = {"wavelength": 171, "cadence": "1h", "show": SHOW, "date": "2025-10-20T12:00:00", "positions": False}
+DEFAULTS = {"wavelength": 171, "cadence": "1h", "show": SHOW, "date": "2025-10-20T12:00:00", "positions": False,
+            "search_inst": ["SPICE", "IRIS"], "fov_inst": ["PHI-HRT", "IRIS"], "fov_without": []}
 ROWS = ["HRIEUV", "HRI-Lya", "PHI-HRT", "SPICE", "FSI", "IRIS", "DKIST"]     # timeline, top down
 IRIS_COLOR = pf.IRIS_COLORS["raster"]
 IRIS_MAX = 4                            # IRIS observations described in the summary, per step
 FSI_COLOR = "#9a9a9a"
 FSI_RUN_GAP = pd.Timedelta("1h")
+SEARCH_COLORS = {"HRIEUV": "lime", "HRI-Lya": "hotpink", "PHI-HRT": "cyan", "SPICE": "gold", "FSI": FSI_COLOR,
+                 "IRIS": IRIS_COLOR, "DKIST": "white"}
+SEARCH_MAX = 3000                       # results listed
+SEARCH_HELP = ('<span style="color:#999">Search all the cached metadata. Keywords separated by commas: any of them '
+               '(OR); several words in one keyword = that phrase. One instrument selected: its matching '
+               'observations. Two or more: only the times when <b>all</b> of them have a matching observation '
+               'going on at once (AND). Click a result to go to its start.</span>')
+FOV_HELP = ('<span style="color:#999">Common field of view (fov_search.py): sets of observations, one per selected '
+            'instrument (two or more), at the same time AND overlapping on the Sun. Common % = the shared area as a '
+            'share of the smallest FOV; centre in Stonyhurst lat, lon. FOVs from Solar Orbiter and Earth are compared '
+            'through their footprints on the surface (off-limb parts count at the limb), only where both see the '
+            'surface at μ ≥ min μ (μ = cos of the viewing angle; 0 at the limb), so a strip both see edge-on when '
+            'Solar Orbiter is round the far side does not count; each result gives the μ from each side. IRIS '
+            'full-disk mosaics (whole disk in HCR, one tile at a time) are left out unless ticked. <b>without</b>: '
+            'instruments that must NOT be observing the common FOV; the times they share any part of it are cut out '
+            'and the pieces left (at least 5 min) are listed, so one instrument is then enough (e.g. HRIEUV without '
+            'IRIS). The metadata gives FOVs, not features: an IRIS box inside the HRIEUV FOV but off your plume still '
+            'counts. From / to blank = all. Click a result to go to its start.</span>')
+
+
+def results_widget():
+    """The table of search results (keywords or common FOV)."""
+    t = pn.widgets.Tabulator(pd.DataFrame(), disabled=True, show_index=False, height=440, sizing_mode="stretch_width",
+                             layout="fit_columns", selectable=1,
+                             formatters={"what": {"type": "textarea"}, "instrument": {"type": "html"}},
+                             widths={"instrument": 75, "start": 125, "duration": 70, "common %": 65})
+    t.style.map(lambda v: "background-color: #1c1c1c", subset=["instrument"])
+    return t
+
+
+def result_table(hits):
+    """Search results as shown: each instrument in its colour (one per line), start, duration,
+    common % (common FOV only), what."""
+    names = ["<br>".join(f'<b style="color:{SEARCH_COLORS.get(i, "#ddd")}">{i}</b>' for i in v.split(" + "))
+             for v in hits.instrument]
+    table = dict(instrument=names, start=hits.start.dt.strftime("%Y-%m-%d %H:%M"),
+                 duration=[br.fmt_td(d) for d in hits.end - hits.start])
+    if "overlap" in hits:
+        table["common %"] = hits.overlap.round(0)
+    table["what"] = hits.what
+    return pd.DataFrame(table)
+
+
+def toggle_css(options, without=False):
+    """Stylesheet for a CheckButtonGroup: a selected button filled with its instrument's colour
+    (bold, black text), an unselected one dark with grey text and only a border in that colour.
+    without=True (instruments to leave out): a selected button dark red, its name struck through."""
+    css = [".bk-btn { background: #1c1c1c !important; color: #8a8a8a !important; border: 1px solid #444 !important; "
+           "box-shadow: none !important; }",
+           ".bk-btn.bk-active { color: #000000 !important; font-weight: bold !important; }"]
+    if without:
+        css.append(".bk-btn.bk-active { background: #8b1a1a !important; color: #ffffff !important; "
+                   "text-decoration: line-through !important; border-color: #ff6060 !important; }")
+        return "\n".join(css)
+    for i, o in enumerate(options, 1):
+        c = SEARCH_COLORS.get(o, "#cccccc")
+        css.append(f".bk-btn:nth-child({i}) {{ border-color: {c} !important; }}")
+        css.append(f".bk-btn.bk-active:nth-child({i}) {{ background: {c} !important; }}")
+    return "\n".join(css)
 PANEL_PX = 500
 BG = "#111111"
 _locks, _locks_lock = {}, threading.Lock()
@@ -126,18 +201,22 @@ def save_settings(s):
 
 def light_image(path, size=LIGHT_N, style="auto"):
     """A FITS image as an RGBA array (row 0 at the bottom), north up, at most size px a
-    side, with its extent in arcsec and its observer: dict(rgba, x0, y0, dw, dh, date,
-    obs_lat, obs_lon, obs_r, rsun, source). style "auto": the map's colour map, asinh
-    stretch; "blos": grey, +-BLOS_RANGE G (PHI-HRT). Made once, kept in cache/web/."""
+    side, with its extent in arcsec and its observer: dict(rgba, data, x0, y0, dw, dh, date,
+    obs_lat, obs_lon, obs_r, rsun, source, cmap, unit). style "auto": the map's colour map, asinh
+    stretch; "blos": grey, +-BLOS_RANGE G (PHI-HRT). data: the reduced values (float16, same
+    pixels as rgba) for other displays (render). Made once, kept in cache/web/."""
     path = Path(path)
     tag = f"{size}" if style == "auto" else f"{size}_{style}"
     png, meta = LIGHT / f"{path.name}_{tag}.png", LIGHT / f"{path.name}_{tag}.json"
+    npy = LIGHT / f"{path.name}_{size}.npy"
     with lock_for(png):
-        if not (png.is_file() and meta.is_file()):
+        if not (png.is_file() and meta.is_file() and npy.is_file() and "cmap" in json.loads(meta.read_text())):
             m = sunpy.map.Map(path)
             data = np.asarray(m.data, dtype=np.float32)
+            unit = str(m.meta.get("bunit", "")).strip()
             if float(m.meta.get("lvl_num", 0)) == 1.0:   # full-resolution AIA level 1: DN -> DN/s
                 data = data / np.float32(m.exposure_time.to_value(u.s))
+                unit = "DN/s"
             m = sunpy.map.Map(np.where(np.isfinite(data), data, 0), m.meta)
             if max(m.data.shape) > size:
                 f = max(m.data.shape) / size
@@ -158,13 +237,84 @@ def light_image(path, size=LIGHT_N, style="auto"):
             info = dict(x0=float(tx[0]), y0=float(ty[0]), dw=float(tx[1] - tx[0]), dh=float(ty[1] - ty[0]),
                         date=m.date.isot, obs_lat=float(o.lat.to_value(u.deg)), obs_lon=float(o.lon.to_value(u.deg)),
                         obs_r=float(o.radius.to_value(u.au)), rsun=float(m.rsun_obs.to_value(u.arcsec)),
-                        source=path.name)
+                        source=path.name, cmap=m.cmap.name, unit=unit)
             LIGHT.mkdir(parents=True, exist_ok=True)
             Image.fromarray(np.flipud(rgba)).save(png, optimize=False)
+            np.save(npy, np.clip(d, -65000, 65000).astype(np.float16))   # display only: 0.05 % precision
             meta.write_text(json.dumps(info, indent=1))
         info = json.loads(meta.read_text())
         info["rgba"] = np.ascontiguousarray(np.flipud(np.asarray(Image.open(png).convert("RGBA"))))
+        info["data"] = np.load(npy)
+        info["key"] = f"{path.name}_{size}"
     return info
+
+
+# ---------------------------------------------------------------- display (stretch, limits, colour map)
+
+STRETCHES = ["linear", "sqrt", "square", "log", "asinh", "sinh", "power", "histogram eq."]
+STRETCH_A = {"log": 1000.0, "asinh": 0.05, "sinh": 0.33, "power": 2.0}   # the stretch parameter's default
+CMAPS = ["default", "gray", "sdoaia94", "sdoaia131", "sdoaia171", "sdoaia193", "sdoaia211", "sdoaia304", "sdoaia335",
+         "sdoaia1600", "sdoaia1700", "solar orbiterfsi174", "solar orbiterfsi304", "solar orbiterhri_euv174",
+         "solar orbiterhri_lya1216", "hmimag", "irissji1400", "irissji2796", "hinodexrt", "viridis", "inferno", "magma",
+         "plasma", "cividis", "hot", "afmhot", "gist_heat", "bone", "coolwarm", "RdBu", "bwr", "seismic", "PuOr"]
+ORIG_KIND = {"hri174": "HRIEUV original", "hriopn": "HRIEUV original", "hrilya": "HRI-Lya original",
+             "phi-hrt": "PHI-HRT original"}
+
+
+def display_default(kind):
+    """The display the reduced PNGs were made with (light_image)."""
+    if kind == "PHI-HRT original":
+        return dict(stretch="linear", a=None, vmin=-BLOS_RANGE, vmax=BLOS_RANGE, pct=99.7, cmap="gray", reverse=False)
+    return dict(stretch="asinh", a=STRETCH_A["asinh"], vmin=None, vmax=None, pct=99.7, cmap="default", reverse=False)
+
+
+def display_limits(data, d):
+    """vmin, vmax: the ones given, else the central pct % of the values."""
+    lo, hi = d.get("vmin"), d.get("vmax")
+    if lo is None or hi is None:
+        x = data[::max(1, data.shape[0] // 1024), ::max(1, data.shape[1] // 1024)].astype(np.float32)
+        x = x[np.isfinite(x)]
+        cut = (100 - float(d.get("pct") or 99.7)) / 2
+        p = np.percentile(x, [cut, 100 - cut]) if x.size else (0.0, 1.0)
+        lo = float(p[0]) if lo is None else lo
+        hi = float(p[1]) if hi is None else hi
+    return float(lo), float(hi)
+
+
+def render(img, d):
+    """img's data in display d (stretch, a, vmin, vmax, pct, cmap, reverse): RGBA (uint8), vmin, vmax."""
+    data = img["data"].astype(np.float32)
+    lo, hi = display_limits(data, d)
+    v = np.clip((data - lo) / ((hi - lo) or 1.0), 0, 1)
+    st, a = d.get("stretch", "linear"), d.get("a")
+    a = STRETCH_A.get(st) if a is None else float(a)
+    if st == "sqrt":
+        v = np.sqrt(v)
+    elif st == "square":
+        v = v * v
+    elif st == "log":
+        v = np.log1p(a * v) / np.log1p(a)
+    elif st == "asinh":
+        v = np.arcsinh(v / a) / np.arcsinh(1 / a)
+    elif st == "sinh":
+        v = np.sinh(v / a) / np.sinh(1 / a)
+    elif st == "power":
+        v = v ** a
+    elif st == "histogram eq.":
+        h, edges = np.histogram(v, bins=4096, range=(0, 1))   # values -> their cumulative fraction
+        v = np.interp(v, edges[1:], np.cumsum(h) / max(h.sum(), 1))
+    cmap = matplotlib.colormaps[img.get("cmap", "gray") if d.get("cmap", "default") == "default" else d["cmap"]]
+    if d.get("reverse"):
+        cmap = cmap.reversed()
+    return cmap(np.nan_to_num(v), bytes=True), lo, hi
+
+
+def display_text(d, lo, hi, unit):
+    st = d.get("stretch", "linear")
+    a = f" {d['a']:g}" if st in STRETCH_A and d.get("a") is not None else ""
+    lim = f"{lo:.4g} .. {hi:.4g} {unit}".strip()
+    return f"{st}{a}, {lim}" + ("" if d.get("vmin") is not None and d.get("vmax") is not None
+                                 else f" ({d.get('pct') or 99.7:g} % of the values)")
 
 
 # ---------------------------------------------------------------- geometry (closed form)
@@ -265,17 +415,25 @@ class WebStep:
                 path = pf.aia_synoptic(t, wl)
         self.aia = light_image(path, FULL_N if self.full else LIGHT_N)
         try:
+            if self.t1 < dm.FIRST_MONTH:    # before DKIST: nothing to query
+                raise LookupError("before DKIST")
             self.dkist = dm.datasets(self.t0, self.t1)
             if len(self.dkist):
                 self.dkist = self.dkist.dropna(subset=["x0"])
+        except LookupError:
+            self.dkist = pd.DataFrame()
         except Exception as e:   # network trouble: no DKIST, the rest is shown
             status(f"DKIST: {e}")
             self.dkist = pd.DataFrame()
         try:   # LMSAL HCR, a month at a time (~40 s the first time, then cache/iris/)
+            if self.t1 < im.FIRST_MONTH:    # before IRIS
+                raise LookupError("before IRIS")
             new = [m for m in sm.months(self.t0 - pd.Timedelta("2D"), self.t1) if m not in im.MONTHS]
             if new:
                 status(f"IRIS observations {', '.join(f'{m:%Y-%m}' for m in new)} (LMSAL HCR) ...")
             self.iris = im.observations(self.t0, self.t1, verbose=False)
+        except LookupError:
+            self.iris = pd.DataFrame()
         except Exception as e:
             status(f"IRIS: {e}")
             self.iris = pd.DataFrame()
@@ -479,6 +637,8 @@ def timeline_iris(d):
 
 
 def timeline_dkist(m):
+    if m < dm.FIRST_MONTH:
+        return []
     end = m + pd.offsets.MonthBegin(1)
     try:
         d = dm.datasets(m, end)
@@ -631,10 +791,14 @@ def prepare_originals(rows, status):
     return out
 
 
-def original_figure(product, filename, img):
-    """One Solar Orbiter file, in its own view (helioprojective arcsec, north up)."""
-    unit = f"B_LOS ±{BLOS_RANGE} G" if product == "phi-hrt" else "asinh stretch"
-    p = figure(title=f"{pf.LABELS[product]} {img['date'][:19].replace('T', ' ')}  ({unit})",
+def original_title(product, img, shown):
+    return f"{pf.LABELS[product]} {img['date'][:19].replace('T', ' ')}  ({shown})"
+
+
+def original_figure(product, filename, img, rgba, shown):
+    """One Solar Orbiter file, in its own view (helioprojective arcsec, north up): layout, image source, figure.
+    rgba: the image in its display (App.image_rgba); shown: that display in words."""
+    p = figure(title=original_title(product, img, shown),
                frame_width=560, frame_height=560, match_aspect=True,
                x_range=Range1d(img["x0"], img["x0"] + img["dw"]), y_range=Range1d(img["y0"], img["y0"] + img["dh"]),
                tools="pan,wheel_zoom,box_zoom,reset,save", active_scroll="wheel_zoom",
@@ -642,14 +806,13 @@ def original_figure(product, filename, img):
     p.title.text_color = pf.COLORS[product]
     for ax in (p.xaxis, p.yaxis):
         ax.major_label_text_color = "#cccccc"
-    ny, nx = img["rgba"].shape[:2]
-    src = ColumnDataSource(dict(image=[img["rgba"].view(np.uint32).reshape(ny, nx)], x=[img["x0"]], y=[img["y0"]],
-                                dw=[img["dw"]], dh=[img["dh"]], **image_meta(img)))
+    src = ColumnDataSource(dict(image=[rgba], x=[img["x0"]], y=[img["y0"]], dw=[img["dw"]], dh=[img["dh"]],
+                                **image_meta(img)))
     p.image_rgba(image="image", x="x", y="y", dw="dw", dh="dh", source=src)
     p.grid.visible = False
     p.add_layout(Label(x=5, y=5, x_units="screen", y_units="screen", text=filename, text_color="#888888",
                        text_font_size="10px"))
-    return with_readout(p, src, 640)
+    return with_readout(p, src, 640), src, p
 
 
 # ---------------------------------------------------------------- the page
@@ -662,7 +825,16 @@ class Store(br.MetaStore):
         super().__init__()
         self.fsi_months = {}
 
+    def month(self, m, status=print):
+        if m < sm.FIRST_MONTH:      # before Solar Orbiter: nothing to query
+            empty = dict(blocks=pd.DataFrame(), files=pd.DataFrame(), fsi=pd.DataFrame())
+            with self.lock:
+                return self.months.setdefault(m, empty)
+        return super().month(m, status)
+
     def fsi_month(self, m):
+        if m < sm.FIRST_MONTH:
+            return pd.DataFrame()
         with self.lock:
             if m not in self.fsi_months:
                 end = m + pd.offsets.MonthBegin(1) - pd.Timedelta("1us")
@@ -714,6 +886,21 @@ if (disc < 0) {
 }
 div.text = hpc + " &nbsp;&nbsp; <b>Stonyhurst</b> " + hgs;
 """ % dict(au=sm.AU_KM, rsun=sm.RSUN_KM)
+
+
+# The time under the cursor on the timeline, and how far it is from the shown time (the Span "now")
+TIME_JS = """
+const t = cb_obj.x;
+if (!isFinite(t)) { div.text = ""; return; }
+const s = new Date(t).toISOString().replace("T", " ").slice(0, 19);
+let dt = (t - now.location) / 1000;
+const sign = dt < 0 ? "\u2212" : "+";
+dt = Math.abs(dt);
+const d = Math.floor(dt / 86400), h = Math.floor(dt % 86400 / 3600), m = Math.floor(dt % 3600 / 60);
+const p = (x) => String(x).padStart(2, "0");
+div.text = "<b>Cursor</b> " + s + " UTC &nbsp;&nbsp; " + sign + (d ? d + " d " : "") + p(h) + ":" + p(m) + ":"
+         + p(Math.floor(dt % 60)) + " from the shown time";
+"""
 
 
 def with_readout(p, src, width):
@@ -792,8 +979,12 @@ class App:
         self.tl_rows = {}         # month -> bars
         self.iris_rows = {}       # month -> IRIS bars
         self.first = {"aia": True, "fsi": True}
-        self.orig_job = self.solo_job = None
+        self.orig_job = self.solo_job = self.search_job = None
+        self.notice = None        # (time, message): a result kept in the status line while that time is shown
         self.slow = ThreadPoolExecutor(max_workers=1)    # original data downloads (JSOC: minutes)
+        self.orig_views = []      # the Solar Orbiter originals shown: (product, filename, img, source, figure)
+        self.renders = {}         # (image, display) -> (rgba as uint32, vmin, vmax)
+        self.s.setdefault("display", {})
 
         # controls
         self.date = pn.widgets.TextInput(name="date (UTC, Enter)", value=f"{self.t:%Y-%m-%d %H:%M:%S}", width=190)
@@ -802,9 +993,10 @@ class App:
         self.cad = pn.widgets.Select(name="cadence", options=list(br.CADENCES), value=self.s["cadence"], width=90)
         self.wl = pn.widgets.Select(name="AIA (Å)", options=[str(w) for w in br.WAVELENGTHS],
                                     value=str(self.s["wavelength"]), width=90)
-        self.show = pn.widgets.CheckButtonGroup(name="show", options=SHOW, value=list(self.s["show"]))
+        self.show = pn.widgets.CheckButtonGroup(name="show", options=SHOW, value=list(self.s["show"]),
+                                                stylesheets=[toggle_css(SHOW)])
         self.orig_btn = pn.widgets.Button(name="download original data", button_type="primary", width=180,
-                                          description="full-resolution AIA (JSOC, 1-3 min) and the Solar Orbiter "
+                                          description="full-resolution AIA (JSOC, 1-3 min; else the VSO NASA mirror) and the Solar Orbiter "
                                                       "files nearest the time; kept in cache/")
         self.pos_btn = pn.widgets.Toggle(name="positions", value=bool(self.s.get("positions")), width=100)
         self.solo_btn = pn.widgets.Button(name="show Solar Orbiter originals", width=210,
@@ -820,6 +1012,29 @@ class App:
         self.cad.param.watch(self.setting_changed, "value")
         self.wl.param.watch(self.setting_changed, "value")
         self.show.param.watch(lambda _: self.show_changed(), "value")
+
+        # display of the images: one set of options per image kind (AIA channel, FSI, each original)
+        self.disp_kind = pn.widgets.Select(name="display of", options=[], width=160)
+        self.disp_stretch = pn.widgets.Select(name="stretch", options=STRETCHES, width=120)
+        self.disp_a = pn.widgets.FloatInput(name="stretch parameter", value=0.05, width=110)
+        self.disp_vmin = pn.widgets.TextInput(name="vmin (blank: auto)", width=120)
+        self.disp_vmax = pn.widgets.TextInput(name="vmax (blank: auto)", width=120)
+        self.disp_pct = pn.widgets.FloatInput(name="auto: central % of values", value=99.7, start=1, end=100, step=0.1,
+                                              width=150)
+        self.disp_cmap = pn.widgets.Select(name="colour map", options=CMAPS, width=170)
+        self.disp_rev = pn.widgets.Checkbox(name="reversed", width=80)
+        self.disp_reset = pn.widgets.Button(name="default", width=80, description="back to the default display")
+        self.disp_info = pn.pane.HTML("", styles={"color": "#bbbbbb", "font-size": "12px"}, width=520)
+        self._disp_loading = False
+        self.disp_kind.param.watch(lambda _: self.display_widgets(), "value")
+        for w in (self.disp_stretch, self.disp_a, self.disp_vmin, self.disp_vmax, self.disp_pct, self.disp_cmap,
+                  self.disp_rev):
+            w.param.watch(self.display_changed, "value")
+        self.disp_reset.on_click(lambda _: self.display_reset())
+        display_row = pn.Row(self.disp_kind, self.disp_stretch, self.disp_a, self.disp_vmin, self.disp_vmax,
+                             self.disp_pct, self.disp_cmap,
+                             pn.Column(pn.Spacer(height=22), pn.Row(self.disp_rev, self.disp_reset), margin=0),
+                             pn.Column(pn.Spacer(height=14), self.disp_info, margin=0), sizing_mode="stretch_width")
 
         # timeline
         self.tl_src = ColumnDataSource(dict(row=[], start=[], end=[], color=[], name=[], info=[]))
@@ -841,6 +1056,11 @@ class App:
         tl.grid.grid_line_alpha = 0.15
         tl.on_event(Tap, self.timeline_tap)
         self.tl = tl
+        tl_div = Div(text="", height=20, styles={"color": "#dddddd", "font-family": "monospace", "font-size": "12px",
+                                                 "padding-left": "60px"})
+        tl.js_on_event(MouseMove, CustomJS(args=dict(div=tl_div, now=self.now), code=TIME_JS))
+        tl.js_on_event(MouseLeave, CustomJS(args=dict(div=tl_div), code="div.text = '';"))
+        tl_layout = column(tl, tl_div, sizing_mode="stretch_width")
 
         # images and tabs
         self.fig_aia, self.src_aia = image_figure("SDO/AIA")
@@ -853,8 +1073,56 @@ class App:
         self.fig_pos, self.src_pos = positions_figure()
         self.pos_table = pn.pane.HTML("", sizing_mode="stretch_width")
         self.pos_note = pn.pane.HTML('<span style="color:#888">press "positions" to see where the spacecraft are</span>')
+        self.q_inst = pn.widgets.CheckButtonGroup(options=sx.INSTRUMENTS, value=list(self.s["search_inst"]),
+                                                  stylesheets=[toggle_css(sx.INSTRUMENTS)])
+        self.q_text = pn.widgets.TextInput(placeholder="search metadata: keywords, comma = or, e.g. coronal hole, plume  (Enter)",
+                                           width=380)
+        self.q_btn = pn.widgets.Button(name="search", button_type="primary", width=80)
+        self.q_note = pn.pane.HTML(SEARCH_HELP)
+        self.q_hits = pd.DataFrame()
+        self.q_table = results_widget()
+        self.q_text.param.watch(lambda _: self.search(), "value")
+        self.q_inst.param.watch(self.search_inst_changed, "value")
+        self.q_btn.on_click(lambda _: self.search())
+        self.q_table.on_click(self.search_clicked)
+        self.search_tab = search_tab = pn.Column(self.q_note, self.q_table,
+                               sizing_mode="stretch_both")
+
+        # common field of view (fov_search.py), apart from the keyword search
+        self.f_inst = pn.widgets.CheckButtonGroup(options=sx.INSTRUMENTS, value=list(self.s["fov_inst"]),
+                                                  stylesheets=[toggle_css(sx.INSTRUMENTS)])
+        self.f_not = pn.widgets.CheckButtonGroup(options=sx.INSTRUMENTS, value=list(self.s.get("fov_without", [])),
+                                                 stylesheets=[toggle_css(sx.INSTRUMENTS, without=True)],
+                                                 description="instruments that must NOT be observing the common FOV "
+                                                             "(their times are cut out)")
+        self.f_from = pn.widgets.TextInput(placeholder="from (blank: all)", width=115)
+        self.f_to = pn.widgets.TextInput(placeholder="to (blank: all)", width=115)
+        self.f_min = pn.widgets.FloatInput(value=0, start=0, end=100, step=5, width=62)
+        self.f_mu = pn.widgets.FloatInput(value=fs.MIN_MU, start=0, end=1, step=0.05, width=70,
+                                          description="Solar Orbiter vs Earth: the common area must be seen at least "
+                                                      "this face-on (mu = cos of the viewing angle) from both")
+        self.f_mosaic = pn.widgets.Checkbox(name="IRIS mosaics", value=False, width=100, margin=(14, 5, 5, 10))
+        self.f_btn = pn.widgets.Button(name="find common FOV", button_type="primary", width=140)
+        self.f_note = pn.pane.HTML(FOV_HELP)
+        self.f_hits = pd.DataFrame()
+        self.f_table = results_widget()
+        self.fov_job = None
+        self.f_inst.param.watch(self.search_inst_changed, "value")
+        self.f_not.param.watch(self.search_inst_changed, "value")
+        self.f_btn.on_click(lambda _: self.fov_find())
+        self.f_table.on_click(self.fov_clicked)
+        self.fov_tab = pn.Column(self.f_note, self.f_table, sizing_mode="stretch_both")
+        label = {"color": "#aaaaaa", "font-size": "12px"}
+        fov_row = pn.Row(pn.pane.HTML("<b>common FOV</b> of", styles={"color": "#dddddd", "font-size": "13px"},
+                                      margin=(14, 5, 5, 10)),
+                         self.f_inst, pn.pane.HTML("without", styles={"color": "#ff8080", "font-size": "13px"},
+                                                   margin=(14, 2, 5, 10)), self.f_not, self.f_from, self.f_to,
+                         pn.pane.HTML("min %", styles=label, margin=(14, 2, 5, 6)), self.f_min,
+                         pn.pane.HTML("min μ", styles=label, margin=(14, 2, 5, 6)), self.f_mu, self.f_mosaic, self.f_btn,
+                         sizing_mode="stretch_width", styles={"flex-wrap": "wrap"})   # wraps on a narrow window
         self.tabs = pn.Tabs(("summary", self.summary), ("Solar Orbiter files", self.files_tab), ("DKIST", self.dkist_tab),
-                            ("IRIS", self.iris_tab), ("positions", pn.Column(self.pos_note, pn.pane.Bokeh(self.fig_pos), self.pos_table)),
+                            ("IRIS", self.iris_tab), ("search", search_tab), ("common FOV", self.fov_tab),
+                            ("positions", pn.Column(self.pos_note, pn.pane.Bokeh(self.fig_pos), self.pos_table)),
                             sizing_mode="stretch_both", min_width=480)
         controls = pn.Row(self.date, self.back, self.fwd, self.cad, self.wl,
                           pn.Column(pn.pane.HTML("show", styles={"color": "#aaaaaa", "font-size": "12px"}),
@@ -862,9 +1130,15 @@ class App:
                           pn.Column(pn.Spacer(height=18), pn.Row(self.pos_btn, self.orig_btn, self.solo_btn), margin=0),
                           sizing_mode="stretch_width")
         self.close_btn = pn.widgets.Button(name="close", width=80)
-        self.close_btn.on_click(lambda _: setattr(self.orig_area, "visible", False))
+        self.close_btn.on_click(lambda _: self.close_originals())
         self.orig_area = pn.Column(sizing_mode="stretch_width", visible=False)
-        self.layout = pn.Column(controls, pn.Row(self.title, self.status), pn.pane.Bokeh(tl, sizing_mode="stretch_width"),
+        search_row = pn.Row(self.q_text, self.q_inst, self.q_btn, pn.Spacer(width=20), self.title, self.status,
+                            sizing_mode="stretch_width")
+        # the controls stay at the top of the window when the page is scrolled (the originals are below)
+        header = pn.Column(controls, display_row, search_row, fov_row, sizing_mode="stretch_width",
+                           styles={"position": "sticky", "top": "0px", "z-index": "1000", "background": BG,
+                                   "border-bottom": "1px solid #333333"})
+        self.layout = pn.Column(header, pn.pane.Bokeh(tl_layout, sizing_mode="stretch_width"),
                                 pn.Row(pn.pane.Bokeh(self.src_aia["layout"]), pn.pane.Bokeh(self.src_fsi["layout"]), self.tabs,
                                        sizing_mode="stretch_width", height=PANEL_PX + 120),
                                 self.orig_area, sizing_mode="stretch_width", styles={"background": BG})
@@ -935,8 +1209,265 @@ class App:
             return
         self.solo_job = (st.t, POOL.submit(prepare_originals, rows, self.set_status))
 
+    def close_originals(self):
+        self.orig_area.visible = False
+        self.orig_views = []
+        self.update_display_kinds()
+
+    # ------------------------------------------------ display of the images
+    def display(self, kind):
+        return self.s["display"].get(kind) or display_default(kind)
+
+    def visible_images(self):
+        """kind -> image, for the images on the page."""
+        out = {}
+        st = self.step
+        if st is not None:
+            out[f"AIA {st.wl}"] = st.aia
+            if self.fsi_shown is not None:
+                out["FSI 174"] = self.fsi_shown
+        for product, _, img, _, _ in self.orig_views:
+            out.setdefault(ORIG_KIND[product], img)
+        return out
+
+    def image_rgba(self, img, kind):
+        """img in the display of its kind, as Bokeh wants it (uint32 per pixel), with vmin, vmax."""
+        d = self.display(kind)
+        k = (img["key"], img.get("cmap"), json.dumps(d, sort_keys=True))
+        if k not in self.renders:
+            if d == display_default(kind):          # as reduced: the PNG
+                rgba = img["rgba"]
+                lo, hi = display_limits(img["data"], d)
+            else:
+                rgba, lo, hi = render(img, d)
+            ny, nx = rgba.shape[:2]
+            self.renders[k] = (np.ascontiguousarray(rgba).view(np.uint32).reshape(ny, nx), lo, hi)
+            while len(self.renders) > 12:
+                self.renders.pop(next(iter(self.renders)))
+        return self.renders[k]
+
+    def update_display_kinds(self):
+        kinds = list(self.visible_images())
+        if self.disp_kind.options != kinds:
+            keep = self.disp_kind.value if self.disp_kind.value in kinds else (kinds[0] if kinds else None)
+            self._disp_loading = True
+            self.disp_kind.options = kinds
+            self.disp_kind.value = keep
+            self._disp_loading = False
+        self.display_widgets()
+
+    def display_widgets(self):
+        """The widgets show the display of the selected kind."""
+        kind = self.disp_kind.value
+        if kind is None:
+            return
+        d = self.display(kind)
+        self._disp_loading = True
+        try:
+            self.disp_stretch.value = d["stretch"]
+            self.disp_a.value = d["a"] if d.get("a") is not None else STRETCH_A.get(d["stretch"], 1.0)
+            self.disp_a.visible = d["stretch"] in STRETCH_A
+            self.disp_vmin.value = "" if d.get("vmin") is None else f"{d['vmin']:g}"
+            self.disp_vmax.value = "" if d.get("vmax") is None else f"{d['vmax']:g}"
+            self.disp_pct.value = float(d.get("pct") or 99.7)
+            self.disp_cmap.value = d.get("cmap", "default")
+            self.disp_rev.value = bool(d.get("reverse"))
+        finally:
+            self._disp_loading = False
+        self.display_info()
+
+    def display_info(self):
+        kind = self.disp_kind.value
+        img = self.visible_images().get(kind)
+        if img is None:
+            self.disp_info.object = ""
+            return
+        d = self.display(kind)
+        _, lo, hi = self.image_rgba(img, kind)
+        x = img["data"]
+        unit = img.get("unit", "")
+        cmap = img.get("cmap") if d.get("cmap", "default") == "default" else d["cmap"]
+        self.disp_info.object = (f"<b>{kind}</b> values {np.nanmin(x):.4g} .. {np.nanmax(x):.4g} {unit}<br>"
+                                 f"shown: {display_text(d, lo, hi, unit)}, {cmap}{' reversed' if d.get('reverse') else ''}")
+
+    def display_changed(self, event):
+        if self._disp_loading or self.disp_kind.value is None:
+            return
+        kind = self.disp_kind.value
+        stretch = self.disp_stretch.value
+        if event.obj is self.disp_stretch:      # a new stretch starts with its own parameter
+            self._disp_loading = True
+            self.disp_a.value = STRETCH_A.get(stretch, 1.0)
+            self.disp_a.visible = stretch in STRETCH_A
+            self._disp_loading = False
+        lim = []
+        for w in (self.disp_vmin, self.disp_vmax):
+            try:
+                lim.append(float(w.value) if w.value.strip() else None)
+            except ValueError:
+                self.set_status(f"{w.name}: can't read '{html.escape(w.value)}' (a number, or blank for auto)")
+                return
+        if None not in lim and lim[0] >= lim[1]:
+            self.set_status("vmin must be below vmax")
+            return
+        self.s["display"][kind] = dict(stretch=stretch, a=float(self.disp_a.value) if stretch in STRETCH_A else None,
+                                       vmin=lim[0], vmax=lim[1], pct=float(self.disp_pct.value or 99.7),
+                                       cmap=self.disp_cmap.value, reverse=bool(self.disp_rev.value))
+        if self.s["display"][kind] == display_default(kind):
+            del self.s["display"][kind]
+        save_settings(self.s)
+        self.set_status("")
+        self.refresh_display(kind)
+
+    def display_reset(self):
+        kind = self.disp_kind.value
+        if kind is None:
+            return
+        self.s["display"].pop(kind, None)
+        save_settings(self.s)
+        self.display_widgets()
+        self.refresh_display(kind)
+
+    def refresh_display(self, kind):
+        """Redraw only the images of this kind in their (new) display."""
+        st = self.step
+        targets = []
+        if st is not None and kind == f"AIA {st.wl}":
+            targets.append((self.src_aia["img"], st.aia, None))
+        if kind == "FSI 174" and self.fsi_shown is not None:
+            targets.append((self.src_fsi["img"], self.fsi_shown, None))
+        for product, _, img, src, fig in self.orig_views:
+            if ORIG_KIND[product] == kind:
+                targets.append((src, img, (product, fig)))
+        for src, img, orig in targets:
+            rgba, lo, hi = self.image_rgba(img, kind)
+            data = dict(src.data)
+            data["image"] = [rgba]
+            src.data = data
+            if orig:
+                orig[1].title.text = original_title(orig[0], img, display_text(self.display(kind), lo, hi, img.get("unit", "")))
+        self.display_info()
+
+    # ------------------------------------------------ search
+    def search_inst_changed(self, _):
+        self.s["search_inst"] = list(self.q_inst.value)
+        self.s["fov_inst"] = list(self.f_inst.value)
+        self.s["fov_without"] = list(self.f_not.value)
+        save_settings(self.s)
+
+    def search(self):
+        query = self.q_text.value.strip()
+        if not query:
+            return
+        if self.search_job is not None:
+            self.set_status("search: still searching ...")
+            return
+        inst = [i for i in sx.INSTRUMENTS if i in self.q_inst.value]
+        if not inst:
+            self.q_note.object = '<span style="color:#ff8080">select at least one instrument to search</span>'
+            return
+        self.q_note.object = f'<span style="color:#aaa">searching {html.escape(" OR ".join(sx.terms(query)))} ...</span>'
+        self.search_job = (query, inst, POOL.submit(sx.find, query, inst, status=self.set_status))
+
+    def search_done(self):
+        (query, inst, job), self.search_job = self.search_job, None
+        try:
+            hits = job.result()
+        except Exception as e:
+            traceback.print_exc()
+            self.q_note.object = f'<span style="color:#ff8080">search failed: {html.escape(str(e))}</span>'
+            return
+        self.set_status("")
+        self.tabs.active = self.tabs.objects.index(self.search_tab)
+        n = len(hits)
+        hits = hits.head(SEARCH_MAX)
+        self.q_hits = hits
+        keys = " OR ".join(f"'{t}'" for t in sx.terms(query))
+        what = (f"time(s) when {' AND '.join(inst)} all observed together, each matching" if len(inst) > 1
+                else f"{inst[0]} observation(s) matching")
+        self.q_note.object = (f'<span style="color:#ddd"><b>{n}</b> {html.escape(what)} {html.escape(keys)}'
+                              + (f" (first {SEARCH_MAX} listed)" if n > SEARCH_MAX else "")
+                              + ('. <span style="color:#888">start, duration = the common time; ' if len(inst) > 1
+                                 else '. <span style="color:#888">')
+                              + 'click a row to go to its start; click a column title to sort.</span></span>')
+        if not n:
+            self.q_table.value = pd.DataFrame({"": ["nothing found"]})
+            return
+        self.q_table.value = result_table(hits)
+
+    def search_clicked(self, event):
+        if not len(self.q_hits) or event.row is None or event.row >= len(self.q_hits):
+            return
+        self.go(self.q_hits.start.iloc[event.row].floor("s"))
+
+    # ------------------------------------------------ common field of view
+    def fov_find(self):
+        if self.fov_job is not None:
+            self.set_status("common FOV: still searching ...")
+            return
+        inst = [i for i in sx.INSTRUMENTS if i in self.f_inst.value]
+        without = [i for i in sx.INSTRUMENTS if i in self.f_not.value]
+        problem = ""
+        if set(inst) & set(without):
+            problem = f"{' '.join(sorted(set(inst) & set(without)))} selected in both rows: pick one"
+        elif len(inst) < (1 if without else 2):
+            problem = "select two or more instruments for a common FOV (one is enough with <b>without</b>)"
+        if problem:
+            self.f_note.object = f'<span style="color:#ff8080">{problem}</span>'
+            self.tabs.active = self.tabs.objects.index(self.fov_tab)
+            return
+        span = []
+        for w in (self.f_from, self.f_to):
+            try:
+                span.append(pd.Timestamp(w.value.strip()) if w.value.strip() else None)
+            except ValueError:
+                self.set_status(f"common FOV: can't read the date '{html.escape(w.value)}'")
+                return
+        self.f_note.object = (f'<span style="color:#aaa">common FOV of {" + ".join(inst)}'
+                              + (f' without {" ".join(without)}' if without else "") + ' ...</span>')
+        self.tabs.active = self.tabs.objects.index(self.fov_tab)
+        self.fov_job = ((inst, without), POOL.submit(fs.find, inst, span[0], span[1], float(self.f_min.value or 0),
+                                                     status=self.set_status, min_mu=float(self.f_mu.value or 0),
+                                                     mosaics=bool(self.f_mosaic.value), without=without))
+
+    def fov_done(self):
+        ((inst, without), job), self.fov_job = self.fov_job, None
+        try:
+            hits = job.result()
+        except Exception as e:
+            traceback.print_exc()
+            self.f_note.object = f'<span style="color:#ff8080">common FOV failed: {html.escape(str(e))}</span>'
+            return
+        self.set_status("")
+        n = len(hits)
+        hits = hits.head(SEARCH_MAX)
+        self.f_hits = hits
+        lim = []
+        if self.f_from.value.strip() or self.f_to.value.strip():
+            lim.append(f"{self.f_from.value.strip() or 'start'} to {self.f_to.value.strip() or 'now'}")
+        if float(self.f_min.value or 0) > 0:
+            lim.append(f"common area at least {self.f_min.value:g} %")
+        lim.append(f"Solar Orbiter vs Earth seen at μ ≥ {float(self.f_mu.value or 0):g} from both")
+        lim.append("IRIS full-disk mosaics included" if self.f_mosaic.value else "IRIS full-disk mosaics left out")
+        if without:
+            lim.insert(0, f"without {' '.join(without)} on it: their times cut out, pieces of 5 min or more kept")
+        self.f_note.object = (f'<span style="color:#ddd"><b>{n}</b> '
+                              + (f'set(s) of {html.escape(" + ".join(inst))} observations at the same time on a common '
+                                 'part of the Sun' if len(inst) > 1 else f'{html.escape(inst[0])} observing time(s)')
+                              + (f" ({html.escape('; '.join(lim))})" if lim else "")
+                              + (f" (first {SEARCH_MAX} listed)" if n > SEARCH_MAX else "")
+                              + '. <span style="color:#888">start, duration = the common time; common % = of the '
+                                'smallest FOV; click a row to go to its start.</span></span>')
+        self.f_table.value = result_table(hits) if n else pd.DataFrame({"": ["nothing found"]})
+
+    def fov_clicked(self, event):
+        if not len(self.f_hits) or event.row is None or event.row >= len(self.f_hits):
+            return
+        self.go(self.f_hits.start.iloc[event.row].floor("s"))
+
     # ------------------------------------------------ stepping
     step = None
+    fsi_shown = None
 
     def key(self, t):
         return (t, self.s["cadence"], self.s["wavelength"], bool(self.s.get("positions")))
@@ -976,15 +1507,25 @@ class App:
         if self.orig_job is not None and self.orig_job.done():
             job, self.orig_job = self.orig_job, None
             try:
-                t, paths = job.result()
-                self.set_status(f"original data of {t:%Y-%m-%d %H:%M:%S} downloaded ({len(paths)} Solar Orbiter "
-                                f"file(s)); \"show Solar Orbiter originals\" to see them")
+                t, paths, problem = job.result()
+                msg = f"original data of {t:%Y-%m-%d %H:%M:%S}: {len(paths)} Solar Orbiter file(s) downloaded"
+                if problem:   # kept on screen (notice) until another time is shown
+                    msg += (f"; <b>AIA full resolution NOT downloaded</b> ({html.escape(problem)}), the image is still "
+                            "the synoptic one: try again later")
+                else:
+                    msg += "; AIA full resolution downloaded"
+                self.notice = (t, msg + ('; "show Solar Orbiter originals" to see the Solar Orbiter files' if paths else ""))
+                self.set_status(self.notice[1])
                 self.steps = {k: v for k, v in self.steps.items() if k[0] != t}   # again, now full resolution
                 if t == self.t:
                     self.go(t)
             except Exception as e:
                 traceback.print_exc()
                 self.set_status(f"original data failed: {html.escape(str(e))}")
+        if self.search_job is not None and self.search_job[-1].done():
+            self.search_done()
+        if self.fov_job is not None and self.fov_job[-1].done():
+            self.fov_done()
         if self.solo_job is not None and self.solo_job[1].done():
             (t, job), self.solo_job = self.solo_job, None
             try:
@@ -997,9 +1538,17 @@ class App:
                 head = pn.pane.HTML(f'<b style="color:#eee">Solar Orbiter files nearest to {t:%Y-%m-%d %H:%M:%S}</b>'
                                     '<span style="color:#888"> &nbsp; own view, north up; wheel zoom, drag pan, '
                                     'cursor position below each image</span>')
-                self.orig_area.objects = [pn.Row(head, self.close_btn),
-                                          pn.Row(*[pn.pane.Bokeh(original_figure(*it)) for it in items])]
+                self.orig_views, panes = [], []
+                for product, filename, img in items:
+                    kind = ORIG_KIND[product]
+                    rgba, lo, hi = self.image_rgba(img, kind)
+                    lay, src, fig = original_figure(product, filename, img, rgba,
+                                                    display_text(self.display(kind), lo, hi, img.get("unit", "")))
+                    self.orig_views.append((product, filename, img, src, fig))
+                    panes.append(pn.pane.Bokeh(lay))
+                self.orig_area.objects = [pn.Row(head, self.close_btn), pn.Row(*panes)]
                 self.orig_area.visible = True
+                self.update_display_kinds()
         if self.pending is None or not self.pending[1].done():
             return
         k, fut = self.pending
@@ -1011,7 +1560,7 @@ class App:
             self.set_status(f"failed: {html.escape(str(e))}")
             self.steps.pop(k, None)
             return
-        self.set_status("")
+        self.set_status(self.notice[1] if self.notice and self.notice[0] == self.t else "")
         self.draw()
         keep = {self.key(self.t + d * self.cadence()) for d in (-1, 0, 1)}
         for old in [x for x in self.steps if x not in keep]:
@@ -1035,7 +1584,7 @@ class App:
         self.tl_src.data = {c: df[c].tolist() if c in ("row", "color", "name", "info") else df[c].values
                             for c in df.columns}
 
-    def draw_image(self, src, fig, img, outlines, which, title, empty_note):
+    def draw_image(self, src, fig, img, outlines, which, title, empty_note, kind):
         if img is None:
             for k in ("img", "grid", "on", "hidden", "off", "patch", "limb", "sc_on", "sc_hidden", "mark"):
                 src[k].data = {c: [] for c in src[k].data}
@@ -1043,8 +1592,7 @@ class App:
             src["note"].text = empty_note
             return
         src["note"].text = ""
-        ny, nx = img["rgba"].shape[:2]
-        src["img"].data = dict(image=[img["rgba"].view(np.uint32).reshape(ny, nx)], x=[img["x0"]], y=[img["y0"]],
+        src["img"].data = dict(image=[self.image_rgba(img, kind)[0]], x=[img["x0"]], y=[img["y0"]],
                                dw=[img["dw"]], dh=[img["dh"]], **image_meta(img))
         gx, gy = grid(img)
         src["grid"].data = dict(xs=gx, ys=gy)
@@ -1071,13 +1619,16 @@ class App:
         blocks = st.blocks[st.blocks["product"].isin(shown_products)] if len(st.blocks) else st.blocks
         kind = "full resolution" if st.full else "synoptic"
         self.draw_image(self.src_aia, self.fig_aia, st.aia, st.outlines["aia"], "aia",
-                        f"SDO/AIA {st.wl} Å  {st.aia['date'][:19].replace('T', ' ')}  ({kind}, Earth view)", "")
+                        f"SDO/AIA {st.wl} Å  {st.aia['date'][:19].replace('T', ' ')}  ({kind}, Earth view)", "",
+                        f"AIA {st.wl}")
         has_solo = len(blocks) > 0 and st.fsi is not None
         note = ("no Solar Orbiter observation (HRI / PHI-HRT / SPICE) in this step" if not len(blocks)
                 else "no FSI image within a day")
+        self.fsi_shown = st.fsi if has_solo else None
         self.draw_image(self.src_fsi, self.fig_fsi, st.fsi if has_solo else None, st.outlines["fsi"], "fsi",
                         f"SolO/EUI FSI 174 Å  {st.fsi['date'][:19].replace('T', ' ')}  (Solar Orbiter view)"
-                        if has_solo else "SolO/EUI FSI 174 Å", note)
+                        if has_solo else "SolO/EUI FSI 174 Å", note, "FSI 174")
+        self.update_display_kinds()
         self.draw_observers(st, blocks, has_solo)
         half = (st.t1 - st.t0) / 2
         self.title.object = (f"<b>{st.t:%Y-%m-%d %H:%M:%S} UTC</b> &nbsp; step ±{br.fmt_td(half)} &nbsp; "

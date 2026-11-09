@@ -27,7 +27,8 @@ PAGE = 500
 FIRST_MONTH = pd.Timestamp("2020-01-01")   # DKIST first light 2019-12; science data from 2021-22
 KEEP = ["datasetId", "instrumentName", "startTime", "endTime", "boundingBox", "primaryProposalId",
         "isEmbargoed", "embargoEndDate", "spectralLines", "wavelengthMin", "wavelengthMax", "frameCount",
-        "averageDatasetSpatialSampling", "qualityAverageFriedParameter", "browseMovieUrl"]
+        "averageDatasetSpatialSampling", "qualityAverageFriedParameter", "browseMovieUrl",
+        "primaryExperimentId", "experimentDescription", "targetTypes", "datasetSize"]   # text: search_meta.py
 
 
 def query_month(m, refresh=False, verbose=True):
@@ -52,8 +53,9 @@ def query_month(m, refresh=False, verbose=True):
         page += 1
     df = pd.DataFrame(rows, columns=None if rows else KEEP)
     df = df[[c for c in KEEP if c in df]]
-    if "spectralLines" in df:
-        df["spectralLines"] = df.spectralLines.apply(lambda v: "; ".join(v) if isinstance(v, list) else v)
+    for c in ("spectralLines", "targetTypes"):
+        if c in df:
+            df[c] = df[c].apply(lambda v: "; ".join(v) if isinstance(v, list) else v)
     if verbose:
         print(f"{len(df)} datasets")
     if total is not None and len(df) < total:
